@@ -18,6 +18,7 @@ export interface ChatState {
   streaming: boolean;
   streamingText: string;
   inputText: string;
+  inputImages: string[];
   error: string | null;
   models: string[];
   selectedModel: string;
@@ -37,6 +38,7 @@ export type ChatAction =
   | { type: 'APPEND_STREAMING_TEXT'; delta: string }
   | { type: 'RESET_STREAMING_TEXT' }
   | { type: 'SET_INPUT'; text: string }
+  | { type: 'SET_INPUT_IMAGES'; images: string[] }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_MODELS'; models: string[] }
   | { type: 'SET_SELECTED_MODEL'; model: string }
@@ -53,6 +55,7 @@ const initialState: ChatState = {
   streaming: false,
   streamingText: '',
   inputText: '',
+  inputImages: [],
   error: null,
   models: [],
   selectedModel: '',
@@ -79,6 +82,8 @@ function reducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, streamingText: '' };
     case 'SET_INPUT':
       return { ...state, inputText: action.text };
+    case 'SET_INPUT_IMAGES':
+      return { ...state, inputImages: action.images };
     case 'SET_ERROR':
       return { ...state, error: action.error };
     case 'SET_MODELS':

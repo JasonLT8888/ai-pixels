@@ -34,6 +34,110 @@ function extractJsonFromCodeBlock(text: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
+
+function isLikelyImageSource(value: string): boolean {
+  return (
+    value.startsWith('data:image/') ||
+    /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?$/i.test(value)
+  );
+}
+
+function mergeImageUrls(existing: string[], incoming: string[]): string[] {
+  const merged = [...existing];
+  for (const url of incoming) {
+    if (!url || merged.includes(url)) continue;
+    merged.push(url);
+  }
+  return merged;
+}
+
+function normalizeMessageImages(images?: string | null): string[] {
+  if (!images) return [];
+  const trimmed = images.trim();
+  if (!trimmed) return [];
+  if (isLikelyImageSource(trimmed)) return [trimmed];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string' && isLikelyImageSource(item));
+  } catch {
+    return [];
+  }
+}
+
+function extractImageSourcesFromText(content: string): string[] {
+  const results: string[] = [];
+  const markdownImagePattern = /!\[[^\]]*\]\((data:image\/[^)\s]+|https?:\/\/[^)\s]+)\)/gi;
+  const dataUrlPattern = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
+  const bareImageUrlPattern = /https?:\/\/[^\s"'()]+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s"'()]*)?/gi;
+
+  for (const match of content.matchAll(markdownImagePattern)) {
+    results.push(match[1]);
+  }
+  for (const match of content.match(dataUrlPattern) ?? []) {
+    results.push(match);
+  }
+  for (const match of content.match(bareImageUrlPattern) ?? []) {
+    results.push(match);
+  }
+
+  return mergeImageUrls([], results);
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('加载图片失败'));
+    image.src = src;
+  });
+}
+
+async function normalizeInputImage(blob: Blob): Promise<string> {
+  const dataUrl = await readBlobAsDataUrl(blob);
+  if (!dataUrl) throw new Error('图片数据为空');
+
+  const image = await loadImageElement(dataUrl);
+  const maxSide = Math.max(image.naturalWidth, image.naturalHeight);
+  if (maxSide <= REFERENCE_IMAGE_MAX_DIMENSION) return dataUrl;
+
+  const scale = REFERENCE_IMAGE_MAX_DIMENSION / maxSide;
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataUrl;
+
+  ctx.drawImage(image, 0, 0, width, height);
+  const outputType = blob.type === 'image/jpeg' || blob.type === 'image/webp' ? blob.type : 'image/png';
+  return canvas.toDataURL(outputType, 0.92);
+}
+
+function renderInstructionsToDataUrl(instructions: Instruction[]): string {
+  const result = executeInstructions(instructions);
+  const offscreen = document.createElement('canvas');
+  offscreen.width = result.width;
+  offscreen.height = result.height;
+  const ctx = offscreen.getContext('2d');
+  if (!ctx) throw new Error('创建预览图失败');
+  ctx.putImageData(result.imageData, 0, 0);
+  return offscreen.toDataURL('image/png');
+}
+
 function getAssistantFormatError(content: string): string | null {
   const parsed = safeParse(content);
   if (parsed.instructions.length > 0) return null;
@@ -123,12 +227,47 @@ function ChatThumbnail({ content }: { content: string }) {
   );
 }
 
+function MessageImages({
+  images,
+  onSendToInput,
+}: {
+  images: string[];
+  onSendToInput?: (images: string[]) => void;
+}) {
+  if (images.length === 0) return null;
+
+  return (
+    <div className="chat-msg-images-block">
+      <div className="chat-msg-images-grid">
+        {images.map((image, index) => (
+          <a
+            key={`${image.slice(0, 32)}-${index}`}
+            className="chat-msg-image-link"
+            href={image}
+            target="_blank"
+            rel="noreferrer"
+            title={`查看图片 ${index + 1}`}
+          >
+            <img className="chat-msg-image" src={image} alt={`消息图片 ${index + 1}`} />
+          </a>
+        ))}
+      </div>
+      {onSendToInput && (
+        <button className="chat-msg-image-forward-btn" onClick={() => onSendToInput(images)}>
+          送入输入框
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Renders assistant message with talk text + inline preview + push to canvas + self-check */
 function AssistantContent({
   content,
   canvasW,
   canvasH,
   onSelfCheck,
+  onSendPreviewToInput,
   formatError,
   onFormatFeedback,
   includeLastUserRequirement,
@@ -138,6 +277,7 @@ function AssistantContent({
   canvasW: number;
   canvasH: number;
   onSelfCheck?: (instructions: Instruction[]) => void;
+  onSendPreviewToInput?: (image: string) => void;
   formatError?: string | null;
   onFormatFeedback?: () => void;
   includeLastUserRequirement?: boolean;
@@ -167,6 +307,15 @@ function AssistantContent({
       saveInstructions(project.projectId, fullInstructions).catch(() => {});
     }
   }, [project.instructions, project.projectId, fullInstructions, projectDispatch]);
+
+  const handleSendPreview = useCallback(() => {
+    if (!onSendPreviewToInput || fullInstructions.length === 0) return;
+    try {
+      onSendPreviewToInput(renderInstructionsToDataUrl(fullInstructions));
+    } catch {
+      // Ignore preview export failure and keep the rest of the message usable.
+    }
+  }, [onSendPreviewToInput, fullInstructions]);
 
   return (
     <>
@@ -206,6 +355,11 @@ function AssistantContent({
             <button className="chat-push-btn" onClick={handlePushToCanvas}>
               推送到画布
             </button>
+            {onSendPreviewToInput && (
+              <button className="chat-preview-forward-btn" onClick={handleSendPreview}>
+                预览送入输入框
+              </button>
+            )}
             {onSelfCheck && (
               <button
                 className="chat-selfcheck-btn"
@@ -327,6 +481,7 @@ export default function ChatPanel() {
       if (chats.length > 0) {
         const latest = chats[0];
         chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: latest.id });
+        chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
         const data = await fetchChatMessages(latest.id);
         if (!cancelled) {
           const msgs = Array.isArray(data) ? data : data.messages || [];
@@ -339,6 +494,7 @@ export default function ChatPanel() {
         // No chats — show size picker for first chat
         setShowSizePicker(true);
         chatDispatch({ type: 'SET_MESSAGES', messages: [] });
+        chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
       }
     })().catch(() => {});
 
@@ -392,6 +548,7 @@ export default function ChatPanel() {
     chatDispatch({ type: 'ADD_CHAT', chat: { ...newChat, canvas_w: newChatW, canvas_h: newChatH, created_at: new Date().toISOString(), message_count: 0 } });
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: newChat.id });
     chatDispatch({ type: 'SET_MESSAGES', messages: [] });
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
     // Clear canvas and instructions for the new chat
     const emptyInstructions: Instruction[] = [];
     projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: emptyInstructions });
@@ -415,6 +572,7 @@ export default function ChatPanel() {
 
   const handleSwitchChat = useCallback(async (chatId: number) => {
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId });
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
     const data = await fetchChatMessages(chatId);
     const msgs = Array.isArray(data) ? data : data.messages || [];
     chatDispatch({ type: 'SET_MESSAGES', messages: msgs });
@@ -423,6 +581,49 @@ export default function ChatPanel() {
     }
     setTab('chat'); // auto-switch to conversation view
   }, [chatDispatch]);
+
+  const handleAttachImages = useCallback(async (blobs: Blob[]) => {
+    if (blobs.length === 0) return;
+
+    try {
+      const imageUrls = await Promise.all(blobs.map((blob) => normalizeInputImage(blob)));
+      chatDispatch({ type: 'SET_INPUT_IMAGES', images: mergeImageUrls(chat.inputImages, imageUrls) });
+      chatDispatch({ type: 'SET_ERROR', error: null });
+      textareaRef.current?.focus();
+    } catch (err: any) {
+      chatDispatch({ type: 'SET_ERROR', error: err.message || '处理图片失败' });
+    }
+  }, [chat.inputImages, chatDispatch]);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageBlobs = Array.from(e.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file);
+
+    if (imageBlobs.length === 0) return;
+
+    e.preventDefault();
+    await handleAttachImages(imageBlobs);
+  }, [handleAttachImages]);
+
+  const handleSendImagesToInput = useCallback((images: string[]) => {
+    if (images.length === 0) return;
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: mergeImageUrls(chat.inputImages, images) });
+    setTab('chat');
+    textareaRef.current?.focus();
+  }, [chat.inputImages, chatDispatch]);
+
+  const handleSendPreviewImageToInput = useCallback((image: string) => {
+    handleSendImagesToInput([image]);
+  }, [handleSendImagesToInput]);
+
+  const handleRemoveInputImage = useCallback((index: number) => {
+    chatDispatch({
+      type: 'SET_INPUT_IMAGES',
+      images: chat.inputImages.filter((_, imageIndex) => imageIndex !== index),
+    });
+  }, [chat.inputImages, chatDispatch]);
 
   const handleDeleteChat = useCallback(async (chatId: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -441,13 +642,21 @@ export default function ChatPanel() {
 
   const handleSend = useCallback(async () => {
     const text = chat.inputText.trim();
-    if (!text || chat.streaming || !project.projectId || !chat.currentChatId) return;
+    const outgoingImages = chat.inputImages;
+    const messageText = text || (outgoingImages.length > 0 ? '请参考这些图片进行创作。' : '');
+    if (!messageText || chat.streaming || !project.projectId || !chat.currentChatId) return;
 
     chatDispatch({ type: 'SET_INPUT', text: '' });
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
     chatDispatch({ type: 'SET_ERROR', error: null });
     chatDispatch({
       type: 'ADD_MESSAGE',
-      message: { project_id: project.projectId, role: 'user', content: text },
+      message: {
+        project_id: project.projectId,
+        role: 'user',
+        content: messageText,
+        images: outgoingImages.length > 0 ? JSON.stringify(outgoingImages) : null,
+      },
     });
     chatDispatch({ type: 'SET_STREAMING', streaming: true });
     chatDispatch({ type: 'RESET_STREAMING_TEXT' });
@@ -457,9 +666,10 @@ export default function ChatPanel() {
     try {
       const response = await sendChatMessage(
         project.projectId,
-        text,
+        messageText,
         chat.selectedModel || undefined,
         chat.currentChatId,
+        outgoingImages,
       );
 
       if (!response.ok) {
@@ -502,28 +712,25 @@ export default function ChatPanel() {
       chatDispatch({ type: 'SET_STREAMING', streaming: false });
       chatDispatch({ type: 'RESET_STREAMING_TEXT' });
     }
-  }, [chat.inputText, chat.streaming, chat.selectedModel, chat.currentChatId, chat.chatList, project.projectId, chatDispatch]);
+  }, [chat.inputText, chat.inputImages, chat.streaming, chat.selectedModel, chat.currentChatId, chat.chatList, project.projectId, chatDispatch]);
 
   // Self-check: render instructions to image, send to AI for review
   const handleSelfCheck = useCallback(async (instructions: Instruction[]) => {
     if (chat.streaming || !project.projectId || !chat.currentChatId) return;
 
-    // Render instructions to an offscreen canvas and export as base64 PNG
-    const result = executeInstructions(instructions);
-    const offscreen = document.createElement('canvas');
-    offscreen.width = result.width;
-    offscreen.height = result.height;
-    const ctx = offscreen.getContext('2d');
-    if (!ctx) return;
-    ctx.putImageData(result.imageData, 0, 0);
-    const dataUrl = offscreen.toDataURL('image/png');
+    const dataUrl = renderInstructionsToDataUrl(instructions);
 
     const prompt = '请检查这张图片，这是你刚才生成的像素画渲染结果。请仔细对比你的创作意图，找出画面中不准确或可以改进的地方，然后输出优化后的完整指令。';
 
     chatDispatch({ type: 'SET_ERROR', error: null });
     chatDispatch({
       type: 'ADD_MESSAGE',
-      message: { project_id: project.projectId, role: 'user', content: '[自行检查] ' + prompt, images: dataUrl },
+      message: {
+        project_id: project.projectId,
+        role: 'user',
+        content: '[自行检查] ' + prompt,
+        images: JSON.stringify([dataUrl]),
+      },
     });
     chatDispatch({ type: 'SET_STREAMING', streaming: true });
     chatDispatch({ type: 'RESET_STREAMING_TEXT' });
@@ -758,6 +965,10 @@ export default function ChatPanel() {
               <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
                 {(() => {
                   const formatError = msg.role === 'assistant' ? getAssistantFormatError(msg.content) : null;
+                  const msgImages = mergeImageUrls(
+                    normalizeMessageImages(msg.images),
+                    msg.role === 'assistant' ? extractImageSourcesFromText(msg.content) : [],
+                  );
                   return (
                     <>
                 <div className="chat-msg-role">
@@ -784,6 +995,7 @@ export default function ChatPanel() {
                           canvasW={chatCanvasW}
                           canvasH={chatCanvasH}
                           onSelfCheck={!chat.streaming ? handleSelfCheck : undefined}
+                          onSendPreviewToInput={!chat.streaming ? handleSendPreviewImageToInput : undefined}
                           formatError={formatError}
                           onFormatFeedback={
                             !chat.streaming && formatError
@@ -795,6 +1007,10 @@ export default function ChatPanel() {
                         />
                       </RenderErrorBoundary>
                     : msg.content}
+                  <MessageImages
+                    images={msgImages}
+                    onSendToInput={msg.role === 'assistant' ? handleSendImagesToInput : undefined}
+                  />
                 </div>
                     </>
                   );
@@ -864,13 +1080,32 @@ export default function ChatPanel() {
                 <span className="chat-model-label">{chat.selectedModel || '未选择模型'}</span>
               )}
             </div>
+            {chat.inputImages.length > 0 && (
+              <div className="chat-input-images">
+                {chat.inputImages.map((image, index) => (
+                  <div key={`${image.slice(0, 32)}-${index}`} className="chat-input-image-chip">
+                    <img className="chat-input-image-thumb" src={image} alt={`待发送图片 ${index + 1}`} />
+                    <button
+                      className="chat-input-image-remove"
+                      onClick={() => handleRemoveInputImage(index)}
+                      title="移除图片"
+                      aria-label={`移除图片 ${index + 1}`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <div className="chat-input-image-hint">已附带 {chat.inputImages.length} 张图片，可直接发送或继续 Ctrl+V 粘贴</div>
+              </div>
+            )}
             <div className="chat-input-area">
               <textarea
                 ref={textareaRef}
                 className="chat-input"
-                placeholder="描述你想画的内容…"
+                placeholder="描述你想画的内容，或直接 Ctrl+V 粘贴参考图…"
                 value={chat.inputText}
                 onChange={(e) => chatDispatch({ type: 'SET_INPUT', text: e.target.value })}
+                onPaste={handlePaste}
                 onKeyDown={handleKeyDown}
                 rows={2}
                 disabled={chat.streaming}
@@ -878,7 +1113,7 @@ export default function ChatPanel() {
               <button
                 className="chat-send-btn"
                 onClick={handleSend}
-                disabled={chat.streaming || !chat.inputText.trim()}
+                disabled={chat.streaming || (!chat.inputText.trim() && chat.inputImages.length === 0)}
               >
                 {chat.streaming ? '…' : '发送'}
               </button>
