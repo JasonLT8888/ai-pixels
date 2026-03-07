@@ -28,6 +28,56 @@ function safeParse(content: string) {
   }
 }
 
+function extractJsonFromCodeBlock(text: string): string | null {
+  const match = /```(?:json)?\s*\n?([\s\S]*?)```/i.exec(text);
+  return match ? match[1].trim() : null;
+}
+
+function getAssistantFormatError(content: string): string | null {
+  const parsed = safeParse(content);
+  if (parsed.instructions.length > 0) return null;
+
+  const trimmed = content.trim();
+  const codeJson = extractJsonFromCodeBlock(trimmed);
+  const candidate = codeJson ?? trimmed;
+  const hasStructuredHint =
+    candidate.startsWith('{') ||
+    candidate.startsWith('[') ||
+    /"actions"\s*:/.test(candidate) ||
+    /```(?:json)?/i.test(trimmed);
+
+  if (!hasStructuredHint) return null;
+
+  try {
+    const val = JSON.parse(candidate);
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      if (!Array.isArray((val as { actions?: unknown }).actions)) {
+        return '缺少 actions 数组';
+      }
+      return 'actions 中未解析到有效指令';
+    }
+    if (Array.isArray(val)) {
+      return '指令数组为空或格式不正确';
+    }
+    return '返回内容不是对象或数组';
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'JSON 解析失败';
+    return `JSON 语法错误: ${detail}`;
+  }
+}
+
+function findLastUserRequirement(messages: ChatMessage[], beforeIndex: number): string | null {
+  for (let i = beforeIndex - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    const text = m.content.trim();
+    if (!text) continue;
+    if (text.startsWith('[反馈错误]') || text.startsWith('[自行检查]')) continue;
+    return text;
+  }
+  return null;
+}
+
 /** Prepend canvas instruction to an instruction list */
 function withCanvas(instructions: Instruction[], w: number, h: number): Instruction[] {
   // Strip any existing canvas instructions AI might have snuck in
@@ -73,7 +123,25 @@ function ChatThumbnail({ content }: { content: string }) {
 }
 
 /** Renders assistant message with talk text + inline preview + push to canvas + self-check */
-function AssistantContent({ content, canvasW, canvasH, onSelfCheck }: { content: string; canvasW: number; canvasH: number; onSelfCheck?: (instructions: Instruction[]) => void }) {
+function AssistantContent({
+  content,
+  canvasW,
+  canvasH,
+  onSelfCheck,
+  formatError,
+  onFormatFeedback,
+  includeLastUserRequirement,
+  onToggleIncludeLastUserRequirement,
+}: {
+  content: string;
+  canvasW: number;
+  canvasH: number;
+  onSelfCheck?: (instructions: Instruction[]) => void;
+  formatError?: string | null;
+  onFormatFeedback?: () => void;
+  includeLastUserRequirement?: boolean;
+  onToggleIncludeLastUserRequirement?: (checked: boolean) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const project = useProject();
   const projectDispatch = useProjectDispatch();
@@ -102,6 +170,26 @@ function AssistantContent({ content, canvasW, canvasH, onSelfCheck }: { content:
   return (
     <>
       <div className="chat-msg-talk">{displayText}</div>
+      {formatError && (
+        <div className="chat-format-error-row">
+          <span className="chat-format-error-text">格式错误: {formatError}</span>
+          {onToggleIncludeLastUserRequirement && (
+            <label className="chat-format-include-toggle">
+              <input
+                type="checkbox"
+                checked={!!includeLastUserRequirement}
+                onChange={(e) => onToggleIncludeLastUserRequirement(e.target.checked)}
+              />
+              附带上一条需求
+            </label>
+          )}
+          {onFormatFeedback && (
+            <button className="chat-format-feedback-btn" onClick={onFormatFeedback}>
+              反馈错误
+            </button>
+          )}
+        </div>
+      )}
       {hasActions && (
         <div className="chat-msg-actions">
           <div className="chat-actions-preview">
@@ -204,6 +292,7 @@ export default function ChatPanel() {
   const [showSizePicker, setShowSizePicker] = useState(false);
   const [newChatW, setNewChatW] = useState(32);
   const [newChatH, setNewChatH] = useState(32);
+  const [includeLastUserRequirement, setIncludeLastUserRequirement] = useState(true);
 
   // Current chat's canvas size
   const currentChat = chat.chatList.find((c) => c.id === chat.currentChatId);
@@ -443,6 +532,97 @@ export default function ChatPanel() {
     }
   };
 
+  const handleFormatFeedback = useCallback(async (assistantMsg: ChatMessage, formatError: string, assistantIndex: number) => {
+    if (chat.streaming || !project.projectId || !chat.currentChatId) return;
+
+    const lastUserRequirement = includeLastUserRequirement
+      ? findLastUserRequirement(chat.messages, assistantIndex)
+      : null;
+
+    const prompt = [
+      '你上一条回复格式不符合要求，前端无法解析。',
+      `错误信息: ${formatError}`,
+      ...(lastUserRequirement
+        ? ['原始用户需求如下（请严格遵循）：', lastUserRequirement]
+        : []),
+      '请重新生成并严格只返回 JSON 对象，格式必须是 {"talk":"...","actions":[...]}。',
+      '不要输出 Markdown 代码块，不要输出额外解释。',
+      '你上一条原始回复如下：',
+      assistantMsg.content,
+    ].join('\n');
+
+    const feedbackLabel = includeLastUserRequirement && lastUserRequirement
+      ? `[反馈错误] ${formatError}（已附带上一条需求）`
+      : `[反馈错误] ${formatError}`;
+
+    chatDispatch({ type: 'SET_ERROR', error: null });
+    chatDispatch({
+      type: 'ADD_MESSAGE',
+      message: { project_id: project.projectId, role: 'user', content: feedbackLabel },
+    });
+    chatDispatch({ type: 'SET_STREAMING', streaming: true });
+    chatDispatch({ type: 'RESET_STREAMING_TEXT' });
+
+    let debugInfo: { model: string; messages: { role: string; content: string }[] } | undefined;
+
+    try {
+      const response = await sendChatMessage(
+        project.projectId,
+        prompt,
+        chat.selectedModel || undefined,
+        chat.currentChatId,
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Request failed' }));
+        chatDispatch({ type: 'SET_ERROR', error: err.error || 'Request failed' });
+        chatDispatch({ type: 'SET_STREAMING', streaming: false });
+        return;
+      }
+
+      const fullText = await readSSEStream(
+        response,
+        (delta) => chatDispatch({ type: 'APPEND_STREAMING_TEXT', delta }),
+        (error) => chatDispatch({ type: 'SET_ERROR', error }),
+        (debug) => { debugInfo = debug; },
+      );
+
+      chatDispatch({
+        type: 'ADD_MESSAGE',
+        message: {
+          project_id: project.projectId,
+          role: 'assistant',
+          content: fullText,
+          model: debugInfo?.model,
+          _debug: debugInfo,
+        },
+      });
+
+      chatDispatch({
+        type: 'SET_CHAT_LIST',
+        chatList: chat.chatList.map((c) =>
+          c.id === chat.currentChatId
+            ? { ...c, message_count: c.message_count + 2, last_assistant_content: fullText }
+            : c
+        ),
+      });
+    } catch (err: any) {
+      chatDispatch({ type: 'SET_ERROR', error: err.message || 'Network error' });
+    } finally {
+      chatDispatch({ type: 'SET_STREAMING', streaming: false });
+      chatDispatch({ type: 'RESET_STREAMING_TEXT' });
+    }
+  }, [
+    chat.streaming,
+    chat.selectedModel,
+    chat.currentChatId,
+    chat.chatList,
+    chat.messages,
+    includeLastUserRequirement,
+    project.projectId,
+    chatDispatch,
+  ]);
+
   return (
     <div className="chat-panel">
       {/* Model selector bar */}
@@ -490,6 +670,10 @@ export default function ChatPanel() {
           <div className="chat-messages" ref={listRef}>
             {chat.messages.map((msg, i) => (
               <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
+                {(() => {
+                  const formatError = msg.role === 'assistant' ? getAssistantFormatError(msg.content) : null;
+                  return (
+                    <>
                 <div className="chat-msg-role">
                   {msg.role === 'user' ? '你' : (
                     <>
@@ -506,13 +690,29 @@ export default function ChatPanel() {
                     </>
                   )}
                 </div>
-                <div className="chat-msg-content">
+                <div className={`chat-msg-content${formatError ? ' chat-msg-content-invalid' : ''}`}>
                   {msg.role === 'assistant'
                     ? <RenderErrorBoundary fallback={<div className="chat-render-error">AI 返回格式异常，无法渲染<pre className="chat-actions-code">{msg.content}</pre></div>}>
-                        <AssistantContent content={msg.content} canvasW={chatCanvasW} canvasH={chatCanvasH} onSelfCheck={!chat.streaming ? handleSelfCheck : undefined} />
+                        <AssistantContent
+                          content={msg.content}
+                          canvasW={chatCanvasW}
+                          canvasH={chatCanvasH}
+                          onSelfCheck={!chat.streaming ? handleSelfCheck : undefined}
+                          formatError={formatError}
+                          onFormatFeedback={
+                            !chat.streaming && formatError
+                              ? () => handleFormatFeedback(msg, formatError, i)
+                              : undefined
+                          }
+                          includeLastUserRequirement={includeLastUserRequirement}
+                          onToggleIncludeLastUserRequirement={setIncludeLastUserRequirement}
+                        />
                       </RenderErrorBoundary>
                     : msg.content}
                 </div>
+                    </>
+                  );
+                })()}
               </div>
             ))}
             {chat.streaming && chat.streamingText && (
