@@ -247,4 +247,4 @@ conversations: id, project_id, chat_id, role, content, images(JSON), model, crea
 
 ## License
 
-Private project.
+[MIT](LICENSE)
