@@ -158,13 +158,26 @@ export interface RenderResult {
   imageData: ImageData;
   width: number;
   height: number;
+  currentColorHex: string;
+  lastComment: string | null;
+  palette: string[];
+  currentColorIndex: number | null;
+}
+
+function rgbaToHex(rgba: [number, number, number, number]): string {
+  const r = rgba[0].toString(16).padStart(2, '0');
+  const g = rgba[1].toString(16).padStart(2, '0');
+  const b = rgba[2].toString(16).padStart(2, '0');
+  return `#${r}${g}${b}`;
 }
 
 export function executeInstructions(instructions: Instruction[], upToStep?: number): RenderResult {
   const count = upToStep ?? instructions.length;
   let w = 32, h = 32;
   let currentColor: [number, number, number, number] = [0, 0, 0, 255];
+  let currentColorIndex: number | null = null;
   let palette: string[] = [];
+  let lastComment: string | null = null;
 
   // First pass: find canvas size from instructions up to step
   for (let i = 0; i < count; i++) {
@@ -200,7 +213,10 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
         if (Array.isArray(inst[1])) palette = inst[1];
         break;
       case 'color':
-        if (inst[1] !== undefined && inst[1] !== null) currentColor = parseColor(inst[1] as string | number, palette);
+        if (inst[1] !== undefined && inst[1] !== null) {
+          currentColor = parseColor(inst[1] as string | number, palette);
+          currentColorIndex = typeof inst[1] === 'number' ? inst[1] as number : null;
+        }
         break;
       case 'pixel': {
         if (typeof inst[1] !== 'number' || typeof inst[2] !== 'number') break;
@@ -267,6 +283,10 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
         drawLine(data, w, h, x1, y1, x2, y2, color);
         break;
       }
+      case 'comment': {
+        if (typeof inst[1] === 'string') lastComment = inst[1];
+        break;
+      }
       case 'flood': {
         const [, fx, fy] = inst;
         if (typeof fx !== 'number' || typeof fy !== 'number') break;
@@ -280,5 +300,5 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
     }
   }
 
-  return { imageData: new ImageData(data, w, h), width: w, height: h };
+  return { imageData: new ImageData(data, w, h), width: w, height: h, currentColorHex: rgbaToHex(currentColor), lastComment, palette, currentColorIndex };
 }

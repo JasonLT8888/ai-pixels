@@ -138,27 +138,6 @@ export default function App() {
           ?
         </button>
         <div className="toolbar-controls">
-          <label className="toolbar-toggle">
-            <input
-              type="checkbox"
-              checked={state.showGrid}
-              onChange={() => dispatch({ type: 'TOGGLE_GRID' })}
-            />
-            网格
-          </label>
-          <label className="toolbar-zoom">
-            缩放
-            <input
-              type="range"
-              min={1}
-              max={32}
-              value={state.zoom}
-              onChange={(e) =>
-                dispatch({ type: 'SET_ZOOM', zoom: Number(e.target.value) })
-              }
-            />
-            <span>{state.zoom}x</span>
-          </label>
           <button
             className="toolbar-reset-btn"
             onClick={resetLayout}
@@ -186,6 +165,43 @@ export default function App() {
         {/* Center canvas */}
         <section className="canvas-area">
           <PixelCanvas />
+
+          {/* 右上角：网格 + 缩放 */}
+          <div className="canvas-overlay-controls">
+            <label className="overlay-toggle">
+              <input
+                type="checkbox"
+                checked={state.showGrid}
+                onChange={() => dispatch({ type: 'TOGGLE_GRID' })}
+              />
+              网格
+            </label>
+            <label className="overlay-zoom">
+              缩放
+              <input
+                type="range"
+                min={1}
+                max={32}
+                value={state.zoom}
+                onChange={(e) =>
+                  dispatch({ type: 'SET_ZOOM', zoom: Number(e.target.value) })
+                }
+              />
+              <span>{state.zoom}x</span>
+            </label>
+          </div>
+
+          {/* 左上角：comment（仅有内容时显示） */}
+          {state.lastComment && (
+            <div className="canvas-overlay-comment">{state.lastComment}</div>
+          )}
+
+          {/* 底部居中：当前画笔颜色 */}
+          <div className="canvas-overlay-color">
+            <span className="color-label">画笔</span>
+            <span className="color-swatch" style={{ backgroundColor: state.currentColorHex }} />
+            <span>{state.currentColorHex}</span>
+          </div>
         </section>
 
         {/* Resize handle — instruction panel */}

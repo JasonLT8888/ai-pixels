@@ -58,29 +58,100 @@ body {
   margin-left: auto;
 }
 
-.toolbar-toggle,
-.toolbar-zoom {
+/* ── Canvas overlay controls ── */
+.canvas-overlay-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(30, 30, 46, 0.75);
+  backdrop-filter: blur(6px);
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.overlay-toggle,
+.overlay-zoom {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-dim);
   cursor: pointer;
 }
 
-.toolbar-toggle input {
+.overlay-toggle input {
   accent-color: var(--accent);
 }
 
-.toolbar-zoom input[type='range'] {
-  width: 80px;
+.overlay-zoom input[type='range'] {
+  width: 72px;
   accent-color: var(--accent);
 }
 
-.toolbar-zoom span {
-  min-width: 30px;
+.overlay-zoom span {
+  min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.canvas-overlay-comment {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: 80%;
+  background: rgba(30, 30, 46, 0.82);
+  backdrop-filter: blur(6px);
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-overlay-color {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(30, 30, 46, 0.75);
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.color-label {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.color-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
 }
 
 /* ── Main layout ── */

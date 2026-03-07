@@ -45,10 +45,12 @@ export default function PixelCanvas() {
     const ctx = canvas.getContext('2d')!;
     if (instructions.length === 0 || currentStep === 0) {
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      dispatch({ type: 'SET_RENDER_META', currentColorHex: '#000000', lastComment: null });
       return;
     }
-    const { imageData } = executeInstructions(instructions, currentStep);
+    const { imageData, currentColorHex, lastComment } = executeInstructions(instructions, currentStep);
     ctx.putImageData(imageData, 0, 0);
+    dispatch({ type: 'SET_RENDER_META', currentColorHex, lastComment });
   }, [instructions, currentStep, canvasWidth, canvasHeight]);
 
   // Draw grid overlay — 3-layer lines: dark, white, dark for visibility on any background

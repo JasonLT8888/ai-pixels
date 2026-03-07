@@ -11,6 +11,8 @@ export interface ProjectState {
   showGrid: boolean;
   playing: boolean;
   playSpeed: number; // ms per step
+  currentColorHex: string;
+  lastComment: string | null;
 }
 
 export type ProjectAction =
@@ -24,7 +26,8 @@ export type ProjectAction =
   | { type: 'SET_ZOOM'; zoom: number }
   | { type: 'TOGGLE_GRID' }
   | { type: 'SET_PLAYING'; playing: boolean }
-  | { type: 'SET_PLAY_SPEED'; speed: number };
+  | { type: 'SET_PLAY_SPEED'; speed: number }
+  | { type: 'SET_RENDER_META'; currentColorHex: string; lastComment: string | null };
 
 const initialState: ProjectState = {
   projectId: null,
@@ -36,6 +39,8 @@ const initialState: ProjectState = {
   showGrid: true,
   playing: false,
   playSpeed: 200,
+  currentColorHex: '#000000',
+  lastComment: null,
 };
 
 function reducer(state: ProjectState, action: ProjectAction): ProjectState {
@@ -86,6 +91,8 @@ function reducer(state: ProjectState, action: ProjectAction): ProjectState {
       return { ...state, playing: action.playing };
     case 'SET_PLAY_SPEED':
       return { ...state, playSpeed: action.speed };
+    case 'SET_RENDER_META':
+      return { ...state, currentColorHex: action.currentColorHex, lastComment: action.lastComment };
     default:
       return state;
   }

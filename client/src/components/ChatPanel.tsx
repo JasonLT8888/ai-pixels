@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState, useMemo, Component, type Reac
 import { useChat, useChatDispatch } from '../store/ChatContext';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
 import { fetchChats, createChat, deleteChat, clearChatMessages, fetchChatMessages, sendChatMessage } from '../api/chat';
+import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
 import { executeInstructions } from '../canvas/renderer';
@@ -93,7 +94,10 @@ function AssistantContent({ content, canvasW, canvasH, onSelfCheck }: { content:
       }
     }
     projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: fullInstructions });
-  }, [project.instructions, fullInstructions, projectDispatch]);
+    if (project.projectId) {
+      saveInstructions(project.projectId, fullInstructions).catch(() => {});
+    }
+  }, [project.instructions, project.projectId, fullInstructions, projectDispatch]);
 
   return (
     <>
@@ -248,9 +252,13 @@ export default function ChatPanel() {
     chatDispatch({ type: 'ADD_CHAT', chat: { ...newChat, canvas_w: newChatW, canvas_h: newChatH, created_at: new Date().toISOString(), message_count: 0 } });
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: newChat.id });
     chatDispatch({ type: 'SET_MESSAGES', messages: [] });
+    // Clear canvas and instructions for the new chat
+    const emptyInstructions: Instruction[] = [];
+    projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: emptyInstructions });
+    saveInstructions(project.projectId, emptyInstructions).catch(() => {});
     setShowSizePicker(false);
     setTab('chat');
-  }, [project.projectId, newChatW, newChatH, chatDispatch]);
+  }, [project.projectId, newChatW, newChatH, chatDispatch, projectDispatch]);
 
   const handleClearChat = useCallback(async () => {
     if (!chat.currentChatId) return;
