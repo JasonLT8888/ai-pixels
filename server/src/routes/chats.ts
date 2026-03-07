@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../db/index.js';
+import { resolveLLMConfig } from '../llm-config.js';
 
 // Project-scoped routes: mounted at /api/projects
 export const projectChatsRouter = Router();
@@ -85,7 +86,8 @@ chatsRouter.post('/:chatId/compress', async (req, res) => {
   const lastCompressedId = toCompress[toCompress.length - 1].id;
 
   // Load LLM config
-  const config = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
+  const configId = typeof req.body?.config_id === 'number' ? req.body.config_id : undefined;
+  const config = resolveLLMConfig(configId);
   if (!config?.api_url || !config?.api_token || !config?.model) {
     return res.status(400).json({ error: 'LLM 未配置' });
   }

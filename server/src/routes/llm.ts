@@ -1,12 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import db from '../db/index.js';
 import { DEFAULT_SYSTEM_PROMPT } from 'shared/src/default-prompt.js';
+import { resolveLLMConfig } from '../llm-config.js';
 
 const router = Router();
 
 // POST /api/llm/chat — SSE streaming proxy to upstream LLM
 router.post('/chat', async (req: Request, res: Response) => {
-  const { project_id, chat_id, message, model: requestModel, images, retry_last_user } = req.body;
+  const { project_id, chat_id, config_id, model: requestModel, message, images, retry_last_user } = req.body;
   if (!chat_id || !message) {
     return res.status(400).json({ error: 'chat_id and message are required' });
   }
@@ -20,7 +21,7 @@ router.post('/chat', async (req: Request, res: Response) => {
   const canvasH: number = chatRow.canvas_h || 32;
 
   // 1. Load LLM config
-  const config = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
+  const config = resolveLLMConfig(typeof config_id === 'number' ? config_id : undefined);
   if (!config?.api_url || !config?.api_token || !config?.model) {
     return res.status(400).json({ error: 'LLM not configured. Please set API URL, token, and model in settings.' });
   }
@@ -152,6 +153,28 @@ router.post('/chat', async (req: Request, res: Response) => {
     let buffer = '';
     let upstreamDone = false;
 
+    const processLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('data: ')) return;
+      const data = trimmed.slice(6);
+
+      if (data === '[DONE]') {
+        upstreamDone = true;
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) {
+          fullText += delta;
+          res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+        }
+      } catch {
+        // skip unparseable chunks
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -161,29 +184,15 @@ router.post('/chat', async (req: Request, res: Response) => {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-
-        if (data === '[DONE]') {
-          upstreamDone = true;
-          continue;
-        }
-
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) {
-            fullText += delta;
-            res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-          }
-        } catch {
-          // skip unparseable chunks
-        }
+        processLine(line);
       }
     }
 
-    if (!upstreamDone) {
+    if (buffer.trim()) {
+      processLine(buffer);
+    }
+
+    if (!upstreamDone && !fullText.trim()) {
       throw new Error('Upstream stream interrupted');
     }
 

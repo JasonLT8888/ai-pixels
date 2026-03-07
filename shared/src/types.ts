@@ -71,6 +71,23 @@ export interface LLMConfig {
   model: string;
 }
 
+export interface LLMConfigProfile {
+  id: number;
+  name: string;
+  api_url: string;
+  api_token?: string;
+  token_set?: boolean;
+  model: string;
+  context_window?: number;
+  compress_threshold?: number;
+  updated_at?: string;
+}
+
+export interface LLMConfigCollection {
+  active_config_id: number | null;
+  profiles: LLMConfigProfile[];
+}
+
 // ── Project data structure ──
 export interface Project {
   id: number;

@@ -19,10 +19,12 @@ db.pragma('foreign_keys = ON');
 // Create tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS llm_config (
-    id         INTEGER PRIMARY KEY DEFAULT 1,
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL DEFAULT '默认配置',
     api_url    TEXT NOT NULL DEFAULT '',
     api_token  TEXT NOT NULL DEFAULT '',
     model      TEXT NOT NULL DEFAULT '',
+    is_active  INTEGER NOT NULL DEFAULT 0,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -98,6 +100,33 @@ try {
 try {
   db.exec(`ALTER TABLE llm_config ADD COLUMN compress_threshold INTEGER NOT NULL DEFAULT 1000`);
 } catch { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE llm_config ADD COLUMN name TEXT NOT NULL DEFAULT '默认配置'`);
+} catch { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE llm_config ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`);
+} catch { /* already exists */ }
+
+db.prepare(
+  `UPDATE llm_config
+   SET name = CASE
+     WHEN TRIM(COALESCE(name, '')) = '' THEN '默认配置'
+     ELSE name
+   END`
+).run();
+
+const activeConfigRow = db.prepare(
+  'SELECT id FROM llm_config WHERE is_active = 1 ORDER BY updated_at DESC, id ASC LIMIT 1'
+).get() as { id: number } | undefined;
+if (!activeConfigRow) {
+  const fallbackConfigRow = db.prepare(
+    'SELECT id FROM llm_config ORDER BY updated_at DESC, id ASC LIMIT 1'
+  ).get() as { id: number } | undefined;
+
+  if (fallbackConfigRow) {
+    db.prepare('UPDATE llm_config SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END').run(fallbackConfigRow.id);
+  }
+}
 
 // Migration: assign orphan messages to a default chat per project
 const orphanProjects = db.prepare(

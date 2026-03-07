@@ -17,6 +17,37 @@ export async function readSSEStream(
   let fullText = '';
   let receivedDone = false;
 
+  const processLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith('data: ')) return;
+    const data = trimmed.slice(6);
+
+    if (data === '[DONE]') {
+      receivedDone = true;
+      return;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+
+    if (parsed.error) {
+      onError?.(parsed.error);
+      throw new Error(parsed.error);
+    }
+    if (parsed.debug) {
+      onDebug?.(parsed.debug);
+      return;
+    }
+    if (parsed.delta) {
+      fullText += parsed.delta;
+      onDelta(parsed.delta);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -26,39 +57,15 @@ export async function readSSEStream(
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data: ')) continue;
-      const data = trimmed.slice(6);
-
-      if (data === '[DONE]') {
-        receivedDone = true;
-        continue;
-      }
-
-      let parsed: any;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        // skip unparseable
-        continue;
-      }
-
-      if (parsed.error) {
-        onError?.(parsed.error);
-        throw new Error(parsed.error);
-      }
-      if (parsed.debug) {
-        onDebug?.(parsed.debug);
-        continue;
-      }
-      if (parsed.delta) {
-        fullText += parsed.delta;
-        onDelta(parsed.delta);
-      }
+      processLine(line);
     }
   }
 
-  if (!receivedDone) {
+  if (buffer.trim()) {
+    processLine(buffer);
+  }
+
+  if (!receivedDone && !fullText.trim()) {
     const interruptedError = '连接中断，AI 回复未完成，请重试';
     onError?.(interruptedError);
     throw new Error(interruptedError);

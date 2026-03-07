@@ -1,46 +1,67 @@
 import { Router } from 'express';
 import db from '../db/index.js';
+import {
+  createLLMConfig,
+  deleteLLMConfigById,
+  getLLMConfigCollection,
+  resolveLLMConfig,
+  setActiveLLMConfig,
+  toPublicLLMConfig,
+  updateLLMConfigById,
+} from '../llm-config.js';
 
 const router = Router();
 
-// GET /api/config/llm — get LLM config (token masked)
+// GET /api/config/llm — get all LLM configs (token masked)
 router.get('/llm', (_req, res) => {
-  const row = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
-  if (!row) {
-    return res.json({ api_url: '', model: '', token_set: false, context_window: 0, compress_threshold: 1000 });
-  }
-  res.json({
-    api_url: row.api_url,
-    model: row.model,
-    token_set: !!row.api_token,
-    context_window: row.context_window ?? 0,
-    compress_threshold: row.compress_threshold ?? 1000,
-  });
+  res.json(getLLMConfigCollection());
 });
 
-// PUT /api/config/llm — update LLM config
-router.put('/llm', (req, res) => {
-  const { api_url, model, api_token, context_window, compress_threshold } = req.body;
-  const existing = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
+// POST /api/config/llm — create LLM config
+router.post('/llm', (req, res) => {
+  const config = createLLMConfig(req.body ?? {});
+  res.status(201).json(toPublicLLMConfig(config));
+});
 
-  if (!existing) {
-    db.prepare(
-      'INSERT INTO llm_config (id, api_url, api_token, model, context_window, compress_threshold) VALUES (1, ?, ?, ?, ?, ?)'
-    ).run(api_url ?? '', api_token ?? '', model ?? '', context_window ?? 0, compress_threshold ?? 1000);
-  } else {
-    // If token is empty string or undefined, keep existing
-    const token = api_token ? api_token : existing.api_token;
-    db.prepare(
-      'UPDATE llm_config SET api_url = ?, api_token = ?, model = ?, context_window = ?, compress_threshold = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1'
-    ).run(
-      api_url ?? existing.api_url,
-      token,
-      model ?? existing.model,
-      context_window ?? existing.context_window ?? 0,
-      compress_threshold ?? existing.compress_threshold ?? 1000,
-    );
+// PUT /api/config/llm/active — set active LLM config
+router.put('/llm/active', (req, res) => {
+  const configId = typeof req.body?.config_id === 'number' ? req.body.config_id : null;
+  if (configId !== null && !resolveLLMConfig(configId)) {
+    return res.status(404).json({ error: 'Config not found' });
   }
-  res.json({ ok: true });
+
+  setActiveLLMConfig(configId);
+  res.json(getLLMConfigCollection());
+});
+
+// PUT /api/config/llm/:id — update one LLM config
+router.put('/llm/:id', (req, res) => {
+  const configId = Number(req.params.id);
+  if (!Number.isFinite(configId)) {
+    return res.status(400).json({ error: 'Invalid config id' });
+  }
+
+  const updated = updateLLMConfigById(configId, req.body ?? {});
+  if (!updated) {
+    return res.status(404).json({ error: 'Config not found' });
+  }
+
+  res.json(toPublicLLMConfig(updated));
+});
+
+// DELETE /api/config/llm/:id — delete one LLM config
+router.delete('/llm/:id', (req, res) => {
+  const configId = Number(req.params.id);
+  if (!Number.isFinite(configId)) {
+    return res.status(400).json({ error: 'Invalid config id' });
+  }
+
+  const deleted = deleteLLMConfigById(configId);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Config not found' });
+  }
+
+  res.json(getLLMConfigCollection());
 });
 
 // GET /api/config/prompt — get system prompt
@@ -63,20 +84,17 @@ router.put('/prompt', (req, res) => {
 
 // POST /api/config/models — fetch available models from upstream API
 router.post('/models', async (req, res) => {
-  const { api_url, api_token } = req.body;
-  if (!api_url) {
+  const configId = typeof req.body?.config_id === 'number' ? req.body.config_id : undefined;
+  const resolved = resolveLLMConfig(configId);
+  const apiUrl = req.body?.api_url || resolved?.api_url || '';
+  const token = req.body?.api_token || resolved?.api_token || '';
+
+  if (!apiUrl) {
     return res.status(400).json({ error: 'api_url is required' });
   }
 
-  // Use provided token, or fall back to saved token
-  let token = api_token;
-  if (!token) {
-    const row = db.prepare('SELECT api_token FROM llm_config WHERE id = 1').get() as any;
-    token = row?.api_token || '';
-  }
-
   try {
-    const baseUrl = api_url.replace(/\/$/, '');
+    const baseUrl = apiUrl.replace(/\/$/, '');
     const upstream = await fetch(`${baseUrl}/models`, {
       headers: {
         'Authorization': `Bearer ${token}`,

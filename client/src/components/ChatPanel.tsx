@@ -7,7 +7,7 @@ import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
 import { executeInstructions } from '../canvas/renderer';
-import type { ChatMessage, Instruction } from 'shared/src/types';
+import type { ChatMessage, Instruction, LLMConfigProfile } from 'shared/src/types';
 import type { ChatInfo } from '../store/ChatContext';
 
 /** Error boundary — catches render crashes and shows fallback instead of freezing UI */
@@ -422,6 +422,12 @@ function normalizeRequestError(error: unknown): string {
 // Token estimation constants
 const SYSTEM_PROMPT_TOKENS = 800;
 
+function buildModelOptions(config: LLMConfigProfile, models: ModelInfo[], preferredModel?: string): string[] {
+  const merged = [preferredModel, config.model, ...models.map((item) => item.id)]
+    .filter((value): value is string => !!value);
+  return [...new Set(merged)];
+}
+
 /** Rough token estimate: CJK ~1.5 tokens/char, ASCII ~0.25 tokens/char */
 function estimateTokens(text: string): number {
   let tokens = 0;
@@ -500,6 +506,10 @@ export default function ChatPanel() {
   const [lastFailedRequest, setLastFailedRequest] = useState<RetryRequest | null>(null);
   const lastCompressMsgCount = useRef<number>(0);
   const modelsInfoRef = useRef<ModelInfo[]>([]);
+  const selectedConfig = useMemo(
+    () => chat.configProfiles.find((profile) => profile.id === chat.selectedConfigId) ?? null,
+    [chat.configProfiles, chat.selectedConfigId],
+  );
 
   // Current chat's canvas size
   const currentChat = chat.chatList.find((c) => c.id === chat.currentChatId);
@@ -539,35 +549,52 @@ export default function ChatPanel() {
     return () => { cancelled = true; };
   }, [project.projectId, chatDispatch]);
 
-  // Load context config, selected model, and models list from server
-  useEffect(() => {
-    fetchLLMConfig().then((cfg: any) => {
+  const applyConfigSelection = useCallback(async (config: LLMConfigProfile | null, preferredModel?: string) => {
+    if (!config) {
+      modelsInfoRef.current = [];
+      chatDispatch({ type: 'SET_SELECTED_CONFIG', configId: null });
+      chatDispatch({ type: 'SET_SELECTED_MODEL', model: '' });
+      chatDispatch({ type: 'SET_MODELS', models: [] });
+      chatDispatch({ type: 'SET_CONTEXT_CONFIG', contextWindow: 0, compressThreshold: 1000 });
+      return;
+    }
+
+    const nextModel = preferredModel || config.model || '';
+    chatDispatch({ type: 'SET_SELECTED_CONFIG', configId: config.id });
+    chatDispatch({ type: 'SET_SELECTED_MODEL', model: nextModel });
+    chatDispatch({
+      type: 'SET_CONTEXT_CONFIG',
+      contextWindow: config.context_window ?? 0,
+      compressThreshold: config.compress_threshold ?? 1000,
+    });
+
+    try {
+      const list = await fetchModels({ configId: config.id });
+      modelsInfoRef.current = list;
+      const modelOptions = buildModelOptions(config, list, nextModel);
+      chatDispatch({ type: 'SET_MODELS', models: modelOptions });
+
+      const modelInfo = list.find((item) => item.id === nextModel);
       chatDispatch({
         type: 'SET_CONTEXT_CONFIG',
-        contextWindow: cfg.context_window ?? 0,
-        compressThreshold: cfg.compress_threshold ?? 1000,
+        contextWindow: modelInfo?.context_window ?? config.context_window ?? 0,
+        compressThreshold: config.compress_threshold ?? 1000,
       });
-      if (cfg.model) {
-        chatDispatch({ type: 'SET_SELECTED_MODEL', model: cfg.model });
-      }
-      // Auto-fetch models list if api_url is configured
-      if (cfg.api_url) {
-        fetchModels(cfg.api_url, '').then((list) => {
-          modelsInfoRef.current = list;
-          chatDispatch({ type: 'SET_MODELS', models: list.map((m) => m.id) });
-          // Set contextWindow from the currently selected model
-          const current = list.find((m) => m.id === cfg.model);
-          if (current?.context_window) {
-            chatDispatch({
-              type: 'SET_CONTEXT_CONFIG',
-              contextWindow: current.context_window,
-              compressThreshold: cfg.compress_threshold ?? 1000,
-            });
-          }
-        }).catch(() => {});
-      }
-    }).catch(() => {});
+    } catch {
+      modelsInfoRef.current = [];
+      chatDispatch({ type: 'SET_MODELS', models: nextModel ? [nextModel] : [] });
+    }
   }, [chatDispatch]);
+
+  // Load config profiles and initial model list from server
+  useEffect(() => {
+    fetchLLMConfig().then((collection) => {
+      const profiles = collection.profiles || [];
+      const activeConfig = profiles.find((item) => item.id === collection.active_config_id) ?? profiles[0] ?? null;
+      chatDispatch({ type: 'SET_CONFIG_PROFILES', profiles });
+      applyConfigSelection(activeConfig, activeConfig?.model);
+    }).catch(() => {});
+  }, [applyConfigSelection, chatDispatch]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -707,6 +734,7 @@ export default function ChatPanel() {
         project.projectId,
         request.prompt,
         chat.selectedModel || undefined,
+        chat.selectedConfigId || undefined,
         chat.currentChatId,
         request.images,
         retryLastUser,
@@ -867,7 +895,7 @@ export default function ChatPanel() {
     if (!chat.currentChatId || chat.compressing) return;
     chatDispatch({ type: 'SET_COMPRESSING', compressing: true });
     try {
-      const result = await compressChat(chat.currentChatId, chat.selectedModel || undefined);
+      const result = await compressChat(chat.currentChatId, chat.selectedModel || undefined, chat.selectedConfigId || undefined);
       if (result.error) {
         setLastFailedRequest(null);
         chatDispatch({ type: 'SET_ERROR', error: result.error });
@@ -1044,6 +1072,24 @@ export default function ChatPanel() {
               </button>
             </div>
             <div className="chat-model-bar">
+              {chat.configProfiles.length > 0 ? (
+                <select
+                  className="chat-model-select"
+                  value={chat.selectedConfigId ?? ''}
+                  onChange={(e) => {
+                    const configId = Number(e.target.value);
+                    const nextConfig = chat.configProfiles.find((item) => item.id === configId) ?? null;
+                    applyConfigSelection(nextConfig, nextConfig?.model);
+                  }}
+                >
+                  {chat.configProfiles.map((config) => (
+                    <option key={config.id} value={config.id}>{config.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="chat-model-label">未配置 API</span>
+              )}
+
               {chat.models.length > 0 ? (
                 <select
                   className="chat-model-select"
@@ -1054,8 +1100,8 @@ export default function ChatPanel() {
                     const info = modelsInfoRef.current.find((m) => m.id === modelId);
                     chatDispatch({
                       type: 'SET_CONTEXT_CONFIG',
-                      contextWindow: info?.context_window ?? 0,
-                      compressThreshold: chat.compressThreshold,
+                      contextWindow: info?.context_window ?? selectedConfig?.context_window ?? 0,
+                      compressThreshold: selectedConfig?.compress_threshold ?? chat.compressThreshold,
                     });
                   }}
                 >

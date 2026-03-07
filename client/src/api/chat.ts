@@ -27,11 +27,11 @@ export async function fetchChatMessages(chatId: number) {
   return res.json();
 }
 
-export async function compressChat(chatId: number, model?: string) {
+export async function compressChat(chatId: number, model?: string, configId?: number) {
   const res = await fetch(`/api/chats/${chatId}/compress`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: model || undefined }),
+    body: JSON.stringify({ model: model || undefined, config_id: configId || undefined }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: '压缩请求失败' }));
@@ -49,6 +49,7 @@ export async function sendChatMessage(
   projectId: number,
   message: string,
   model?: string,
+  configId?: number,
   chatId?: number,
   images?: string[],
   retryLastUser?: boolean,
@@ -61,6 +62,7 @@ export async function sendChatMessage(
       chat_id: chatId,
       message,
       model: model || undefined,
+      config_id: configId || undefined,
       images: images?.length ? images : undefined,
       retry_last_user: retryLastUser || undefined,
     }),

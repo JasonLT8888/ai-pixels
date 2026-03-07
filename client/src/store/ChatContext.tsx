@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
-import type { ChatMessage } from 'shared/src/types';
+import type { ChatMessage, LLMConfigProfile } from 'shared/src/types';
 
 export interface ChatInfo {
   id: number;
@@ -20,6 +20,8 @@ export interface ChatState {
   inputText: string;
   inputImages: string[];
   error: string | null;
+  configProfiles: LLMConfigProfile[];
+  selectedConfigId: number | null;
   models: string[];
   selectedModel: string;
   currentChatId: number | null;
@@ -40,6 +42,8 @@ export type ChatAction =
   | { type: 'SET_INPUT'; text: string }
   | { type: 'SET_INPUT_IMAGES'; images: string[] }
   | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'SET_CONFIG_PROFILES'; profiles: LLMConfigProfile[] }
+  | { type: 'SET_SELECTED_CONFIG'; configId: number | null }
   | { type: 'SET_MODELS'; models: string[] }
   | { type: 'SET_SELECTED_MODEL'; model: string }
   | { type: 'SET_CURRENT_CHAT'; chatId: number | null }
@@ -57,6 +61,8 @@ const initialState: ChatState = {
   inputText: '',
   inputImages: [],
   error: null,
+  configProfiles: [],
+  selectedConfigId: null,
   models: [],
   selectedModel: '',
   currentChatId: null,
@@ -86,6 +92,10 @@ function reducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, inputImages: action.images };
     case 'SET_ERROR':
       return { ...state, error: action.error };
+    case 'SET_CONFIG_PROFILES':
+      return { ...state, configProfiles: action.profiles };
+    case 'SET_SELECTED_CONFIG':
+      return { ...state, selectedConfigId: action.configId };
     case 'SET_MODELS':
       return { ...state, models: action.models };
     case 'SET_SELECTED_MODEL':
