@@ -97,7 +97,7 @@ chatsRouter.post('/:chatId/compress', async (req, res) => {
     conversationText += `[之前的压缩摘要]\n${existingSummary}\n\n[新增对话]\n`;
   }
   for (const msg of toCompress) {
-    // Skip messages already coisting summary
+    // Skip messages already covered by existing summary
     if (chat.compress_before_id && msg.id <= chat.compress_before_id) continue;
     const label = msg.role === 'user' ? '用户' : 'AI';
     // Strip image data from content for compression
