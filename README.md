@@ -245,6 +245,10 @@ conversations: id, project_id, chat_id, role, content, images(JSON), model, crea
 
 系统提示词为内置硬编码，不可修改。用户可在"追加提示词"中添加额外指令。
 
+## 免责声明
+
+本项目的所有代码均由 AI（Claude）生成，人类开发者负责需求设计、架构决策和代码审查。AI 生成的代码可能存在潜在的错误、安全漏洞或不符合最佳实践的情况。使用者应自行评估风险，作者不对因使用本项目代码而产生的任何直接或间接损失承担责任。
+
 ## License
 
 [MIT](LICENSE)
