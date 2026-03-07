@@ -740,14 +740,15 @@ export default function ChatPanel() {
         >
           历史
         </button>
-        {tab === 'chat' && (
-          <div className="chat-tab-actions">
-            <span className="chat-canvas-size">{chatCanvasW}×{chatCanvasH}</span>
-            <button className="chat-toolbar-btn" onClick={handleNewChat} title="新建对话">+ 新建</button>
-            <button className="chat-toolbar-btn" onClick={handleClearChat} title="清空当前对话">清空</button>
-          </div>
-        )}
       </div>
+
+      {tab === 'chat' && (
+        <div className="chat-action-bar">
+          <span className="chat-canvas-size">{chatCanvasW}×{chatCanvasH}</span>
+          <button className="chat-toolbar-btn" onClick={handleNewChat} title="新建对话">+ 新建</button>
+          <button className="chat-toolbar-btn" onClick={handleClearChat} title="清空当前对话">清空</button>
+        </div>
+      )}
 
       {/* Tab content */}
       {tab === 'chat' ? (

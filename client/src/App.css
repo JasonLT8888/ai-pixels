@@ -1100,6 +1100,16 @@ body {
   padding-right: 8px;
 }
 
+.chat-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .chat-toolbar-btn {
   background: none;
   border: 1px solid var(--border);
@@ -1108,6 +1118,7 @@ body {
   padding: 2px 8px;
   border-radius: 4px;
   cursor: pointer;
+  line-height: 1.4;
 }
 
 .chat-toolbar-btn:hover {
@@ -1324,6 +1335,7 @@ body {
 
 /* ── Canvas size indicator ── */
 .chat-canvas-size {
+  margin-right: auto;
   font-size: 10px;
   color: var(--text-dim);
   background: var(--bg);
