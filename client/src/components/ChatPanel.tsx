@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState, useMemo, Component, type Reac
 import { useChat, useChatDispatch } from '../store/ChatContext';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
 import { fetchChats, createChat, deleteChat, clearChatMessages, fetchChatMessages, sendChatMessage, compressChat } from '../api/chat';
+import { fetchLLMConfig, fetchModels, type ModelInfo } from '../api/config';
 import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
@@ -229,7 +230,6 @@ type ChatTab = 'chat' | 'history';
 
 // Token estimation constants
 const SYSTEM_PROMPT_TOKENS = 800;
-const AUTO_COMPRESS_THRESHOLD = 4000;
 
 /** Rough token estimate: CJK ~1.5 tokens/char, ASCII ~0.25 tokens/char */
 function estimateTokens(text: string): number {
@@ -306,6 +306,8 @@ export default function ChatPanel() {
   const [newChatW, setNewChatW] = useState(32);
   const [newChatH, setNewChatH] = useState(32);
   const [includeLastUserRequirement, setIncludeLastUserRequirement] = useState(true);
+  const lastCompressMsgCount = useRef<number>(0);
+  const modelsInfoRef = useRef<ModelInfo[]>([]);
 
   // Current chat's canvas size
   const currentChat = chat.chatList.find((c) => c.id === chat.currentChatId);
@@ -342,6 +344,36 @@ export default function ChatPanel() {
 
     return () => { cancelled = true; };
   }, [project.projectId, chatDispatch]);
+
+  // Load context config, selected model, and models list from server
+  useEffect(() => {
+    fetchLLMConfig().then((cfg: any) => {
+      chatDispatch({
+        type: 'SET_CONTEXT_CONFIG',
+        contextWindow: cfg.context_window ?? 0,
+        compressThreshold: cfg.compress_threshold ?? 1000,
+      });
+      if (cfg.model) {
+        chatDispatch({ type: 'SET_SELECTED_MODEL', model: cfg.model });
+      }
+      // Auto-fetch models list if api_url is configured
+      if (cfg.api_url) {
+        fetchModels(cfg.api_url, '').then((list) => {
+          modelsInfoRef.current = list;
+          chatDispatch({ type: 'SET_MODELS', models: list.map((m) => m.id) });
+          // Set contextWindow from the currently selected model
+          const current = list.find((m) => m.id === cfg.model);
+          if (current?.context_window) {
+            chatDispatch({
+              type: 'SET_CONTEXT_CONFIG',
+              contextWindow: current.context_window,
+              compressThreshold: cfg.compress_threshold ?? 1000,
+            });
+          }
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [chatDispatch]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -677,12 +709,20 @@ export default function ChatPanel() {
     }
   }, [chat.currentChatId, chat.compressing, chat.selectedModel, chatDispatch]);
 
-  // Auto-compress when token count exceeds threshold
+  // Auto-compress when remaining context is below threshold (only when contextWindow is known)
   useEffect(() => {
-    if (estimatedTokens > AUTO_COMPRESS_THRESHOLD && !chat.compressing && !chat.streaming && chat.currentChatId) {
+    if (
+      chat.contextWindow > 0 &&
+      chat.contextWindow - estimatedTokens < chat.compressThreshold &&
+      !chat.compressing &&
+      !chat.streaming &&
+      chat.currentChatId &&
+      chat.messages.length > lastCompressMsgCount.current
+    ) {
+      lastCompressMsgCount.current = chat.messages.length;
       handleCompress();
     }
-  }, [estimatedTokens, chat.compressing, chat.streaming, chat.currentChatId, handleCompress]);
+  }, [estimatedTokens, chat.contextWindow, chat.compressThreshold, chat.compressing, chat.streaming, chat.currentChatId, chat.messages.length, handleCompress]);
 
   return (
     <div className="chat-panel">
@@ -708,21 +748,6 @@ export default function ChatPanel() {
           </div>
         )}
       </div>
-
-      {/* Context estimation bar */}
-      {tab === 'chat' && (
-        <div className="chat-context-bar">
-          <span>上下文 ≈ {estimatedTokens} tokens</span>
-          <button
-            className="chat-compress-btn"
-            onClick={handleCompress}
-            disabled={chat.compressing || chat.streaming}
-            title="压缩历史对话"
-          >
-            {chat.compressing ? '压缩中…' : '压缩'}
-          </button>
-        </div>
-      )}
 
       {/* Tab content */}
       {tab === 'chat' ? (
@@ -786,24 +811,77 @@ export default function ChatPanel() {
             )}
             {chat.error && <div className="chat-error">{chat.error}</div>}
           </div>
-          <div className="chat-input-area">
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              placeholder="描述你想画的内容…"
-              value={chat.inputText}
-              onChange={(e) => chatDispatch({ type: 'SET_INPUT', text: e.target.value })}
-              onKeyDown={handleKeyDown}
-              rows={2}
-              disabled={chat.streaming}
-            />
-            <button
-              className="chat-send-btn"
-              onClick={handleSend}
-              disabled={chat.streaming || !chat.inputText.trim()}
-            >
-              {chat.streaming ? '…' : '发送'}
-            </button>
+          <div className="chat-input-wrapper">
+            <div className="chat-context-bar">
+              {chat.contextWindow > 0 ? (
+                <div className="chat-context-progress-wrapper">
+                  <div className="chat-context-progress">
+                    <div
+                      className={`chat-context-progress-fill${
+                        chat.contextWindow - estimatedTokens < chat.compressThreshold
+                          ? estimatedTokens > chat.contextWindow ? ' danger' : ' warning'
+                          : ''
+                      }`}
+                      style={{ width: `${Math.min(100, (estimatedTokens / chat.contextWindow) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="chat-context-tokens">{estimatedTokens} / {chat.contextWindow}</span>
+                </div>
+              ) : (
+                <span className="chat-context-unknown">上下文 ≈ {estimatedTokens} tokens（未获取到上下文大小）</span>
+              )}
+              <button
+                className="chat-compress-btn"
+                onClick={handleCompress}
+                disabled={chat.compressing || chat.streaming}
+                title="压缩历史对话"
+              >
+                {chat.compressing ? '压缩中…' : '压缩'}
+              </button>
+            </div>
+            <div className="chat-model-bar">
+              {chat.models.length > 0 ? (
+                <select
+                  className="chat-model-select"
+                  value={chat.selectedModel}
+                  onChange={(e) => {
+                    const modelId = e.target.value;
+                    chatDispatch({ type: 'SET_SELECTED_MODEL', model: modelId });
+                    const info = modelsInfoRef.current.find((m) => m.id === modelId);
+                    chatDispatch({
+                      type: 'SET_CONTEXT_CONFIG',
+                      contextWindow: info?.context_window ?? 0,
+                      compressThreshold: chat.compressThreshold,
+                    });
+                  }}
+                >
+                  {chat.models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="chat-model-label">{chat.selectedModel || '未选择模型'}</span>
+              )}
+            </div>
+            <div className="chat-input-area">
+              <textarea
+                ref={textareaRef}
+                className="chat-input"
+                placeholder="描述你想画的内容…"
+                value={chat.inputText}
+                onChange={(e) => chatDispatch({ type: 'SET_INPUT', text: e.target.value })}
+                onKeyDown={handleKeyDown}
+                rows={2}
+                disabled={chat.streaming}
+              />
+              <button
+                className="chat-send-btn"
+                onClick={handleSend}
+                disabled={chat.streaming || !chat.inputText.trim()}
+              >
+                {chat.streaming ? '…' : '发送'}
+              </button>
+            </div>
           </div>
         </>
       ) : (

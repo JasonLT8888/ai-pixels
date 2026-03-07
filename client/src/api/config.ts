@@ -5,7 +5,13 @@ export async function fetchLLMConfig() {
   return res.json();
 }
 
-export async function updateLLMConfig(data: { api_url?: string; model?: string; api_token?: string }) {
+export async function updateLLMConfig(data: {
+  api_url?: string;
+  model?: string;
+  api_token?: string;
+  context_window?: number;
+  compress_threshold?: number;
+}) {
   const res = await fetch(`${API}/llm`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -28,7 +34,12 @@ export async function updateSystemPrompt(content: string) {
   return res.json();
 }
 
-export async function fetchModels(apiUrl: string, apiToken: string): Promise<string[]> {
+export interface ModelInfo {
+  id: string;
+  context_window?: number;
+}
+
+export async function fetchModels(apiUrl: string, apiToken: string): Promise<ModelInfo[]> {
   const res = await fetch(`${API}/models`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

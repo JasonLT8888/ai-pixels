@@ -7,30 +7,38 @@ const router = Router();
 router.get('/llm', (_req, res) => {
   const row = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
   if (!row) {
-    return res.json({ api_url: '', model: '', token_set: false });
+    return res.json({ api_url: '', model: '', token_set: false, context_window: 0, compress_threshold: 1000 });
   }
   res.json({
     api_url: row.api_url,
     model: row.model,
     token_set: !!row.api_token,
+    context_window: row.context_window ?? 0,
+    compress_threshold: row.compress_threshold ?? 1000,
   });
 });
 
 // PUT /api/config/llm — update LLM config
 router.put('/llm', (req, res) => {
-  const { api_url, model, api_token } = req.body;
+  const { api_url, model, api_token, context_window, compress_threshold } = req.body;
   const existing = db.prepare('SELECT * FROM llm_config WHERE id = 1').get() as any;
 
   if (!existing) {
     db.prepare(
-      'INSERT INTO llm_config (id, api_url, api_token, model) VALUES (1, ?, ?, ?)'
-    ).run(api_url ?? '', api_token ?? '', model ?? '');
+      'INSERT INTO llm_config (id, api_url, api_token, model, context_window, compress_threshold) VALUES (1, ?, ?, ?, ?, ?)'
+    ).run(api_url ?? '', api_token ?? '', model ?? '', context_window ?? 0, compress_threshold ?? 1000);
   } else {
     // If token is empty string or undefined, keep existing
     const token = api_token ? api_token : existing.api_token;
     db.prepare(
-      'UPDATE llm_config SET api_url = ?, api_token = ?, model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1'
-    ).run(api_url ?? existing.api_url, token, model ?? existing.model);
+      'UPDATE llm_config SET api_url = ?, api_token = ?, model = ?, context_window = ?, compress_threshold = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1'
+    ).run(
+      api_url ?? existing.api_url,
+      token,
+      model ?? existing.model,
+      context_window ?? existing.context_window ?? 0,
+      compress_threshold ?? existing.compress_threshold ?? 1000,
+    );
   }
   res.json({ ok: true });
 });
@@ -82,7 +90,12 @@ router.post('/models', async (req, res) => {
 
     const body = await upstream.json() as any;
     // OpenAI-compatible: { data: [{ id: "model-name", ... }] }
-    const models: string[] = (body.data || []).map((m: any) => m.id).filter(Boolean);
+    const models = (body.data || [])
+      .filter((m: any) => m.id)
+      .map((m: any) => ({
+        id: m.id as string,
+        context_window: m.context_length ?? m.context_window ?? undefined,
+      }));
     res.json({ models });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch models' });

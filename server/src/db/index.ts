@@ -91,6 +91,14 @@ try {
   db.exec(`ALTER TABLE chats ADD COLUMN compress_before_id INTEGER`);
 } catch { /* already exists */ }
 
+// Migration: add context_window and compress_threshold to llm_config
+try {
+  db.exec(`ALTER TABLE llm_config ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0`);
+} catch { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE llm_config ADD COLUMN compress_threshold INTEGER NOT NULL DEFAULT 1000`);
+} catch { /* already exists */ }
+
 // Migration: assign orphan messages to a default chat per project
 const orphanProjects = db.prepare(
   `SELECT DISTINCT project_id FROM conversations WHERE chat_id IS NULL`

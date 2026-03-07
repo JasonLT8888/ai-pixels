@@ -831,6 +831,13 @@ body {
   border-color: var(--accent);
 }
 
+.chat-model-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 8px;
+  display: inline-block;
+}
+
 /* ── Model label on AI messages ── */
 .chat-msg-model {
   color: var(--accent);
@@ -1432,18 +1439,56 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  font-size: 11px;
+}
+
+.chat-context-unknown {
+  color: #ff9800;
   font-size: 11px;
 }
 
 .chat-context-tokens {
   color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  margin-left: 8px;
 }
 
 .chat-context-compressed {
   color: var(--accent);
   font-weight: 500;
+}
+
+/* ── Context progress bar ── */
+.chat-context-progress-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-context-progress {
+  flex: 1;
+  height: 6px;
+  background: var(--surface2, #2a2a2a);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.chat-context-progress-fill {
+  height: 100%;
+  background: #4caf50;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.chat-context-progress-fill.warning {
+  background: #ff9800;
+}
+
+.chat-context-progress-fill.danger {
+  background: #f44336;
 }
 
 .chat-compress-btn {

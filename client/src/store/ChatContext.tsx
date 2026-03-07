@@ -26,6 +26,8 @@ export interface ChatState {
   compressedSummary: string | null;
   compressBeforeId: number | null;
   compressing: boolean;
+  contextWindow: number;
+  compressThreshold: number;
 }
 
 export type ChatAction =
@@ -42,8 +44,9 @@ export type ChatAction =
   | { type: 'SET_CHAT_LIST'; chatList: ChatInfo[] }
   | { type: 'ADD_CHAT'; chat: ChatInfo }
   | { type: 'REMOVE_CHAT'; chatId: number }
-  | { type: 'SET_COMPRESSION'; summary: string | null; beforeId: number | null }
-  | { type: 'SET_COMPRESSING'; compressing: boolean };
+  | { type: 'SET_COMPRESSION'; compressedSummary: string | null; compressBeforeId: number | null }
+  | { type: 'SET_COMPRESSING'; compressing: boolean }
+  | { type: 'SET_CONTEXT_CONFIG'; contextWindow: number; compressThreshold: number };
 
 const initialState: ChatState = {
   messages: [],
@@ -58,6 +61,8 @@ const initialState: ChatState = {
   compressedSummary: null,
   compressBeforeId: null,
   compressing: false,
+  contextWindow: 0,
+  compressThreshold: 1000,
 };
 
 function reducer(state: ChatState, action: ChatAction): ChatState {
@@ -89,9 +94,11 @@ function reducer(state: ChatState, action: ChatAction): ChatState {
     case 'REMOVE_CHAT':
       return { ...state, chatList: state.chatList.filter((c) => c.id !== action.chatId) };
     case 'SET_COMPRESSION':
-      return { ...state, compressedSummary: action.summary, compressBeforeId: action.beforeId };
+      return { ...state, compressedSummary: action.compressedSummary, compressBeforeId: action.compressBeforeId };
     case 'SET_COMPRESSING':
       return { ...state, compressing: action.compressing };
+    case 'SET_CONTEXT_CONFIG':
+      return { ...state, contextWindow: action.contextWindow, compressThreshold: action.compressThreshold };
     default:
       return state;
   }

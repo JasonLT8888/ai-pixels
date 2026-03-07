@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchLLMConfig, updateLLMConfig, fetchSystemPrompt, updateSystemPrompt, fetchModels } from '../api/config';
+import { fetchLLMConfig, updateLLMConfig, fetchSystemPrompt, updateSystemPrompt, fetchModels, type ModelInfo } from '../api/config';
 import { useChatDispatch } from '../store/ChatContext';
 import { DEFAULT_SYSTEM_PROMPT } from 'shared/src/default-prompt';
 
@@ -15,9 +15,11 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [tokenSet, setTokenSet] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [saving, setSaving] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelError, setModelError] = useState('');
+  const [contextWindow, setContextWindow] = useState(0);
+  const [compressThreshold, setCompressThreshold] = useState(1000);
   const chatDispatch = useChatDispatch();
 
   useEffect(() => {
@@ -27,6 +29,8 @@ export default function SettingsModal({ open, onClose }: Props) {
       setModel(cfg.model || '');
       setTokenSet(cfg.token_set || false);
       setToken('');
+      setContextWindow(cfg.context_window ?? 0);
+      setCompressThreshold(cfg.compress_threshold ?? 1000);
     }).catch(() => {});
     fetchSystemPrompt().then((p: any) => {
       setPrompt(p.content || '');
@@ -54,9 +58,10 @@ export default function SettingsModal({ open, onClose }: Props) {
       const tokenToSend = token || '';
       const list = await fetchModels(apiUrl, tokenToSend);
       setModels(list);
-      chatDispatch({ type: 'SET_MODELS', models: list });
-      if (list.length > 0 && !list.includes(model)) {
-        setModel(list[0]);
+      chatDispatch({ type: 'SET_MODELS', models: list.map((m) => m.id) });
+      if (list.length > 0 && !list.find((m) => m.id === model)) {
+        setModel(list[0].id);
+        if (list[0].context_window) setContextWindow(list[0].context_window);
       }
     } catch (err: any) {
       setModelError(err.message || '拉取失败');
@@ -68,10 +73,16 @@ export default function SettingsModal({ open, onClose }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateLLMConfig({ api_url: apiUrl, model, api_token: token || undefined });
+      await updateLLMConfig({
+        api_url: apiUrl,
+        model,
+        api_token: token || undefined,
+        context_window: contextWindow,
+        compress_threshold: compressThreshold,
+      });
       await updateSystemPrompt(prompt);
-      // Sync selected model to chat context
       chatDispatch({ type: 'SET_SELECTED_MODEL', model });
+      chatDispatch({ type: 'SET_CONTEXT_CONFIG', contextWindow, compressThreshold });
       onClose();
     } catch {
       // silent
@@ -113,10 +124,15 @@ export default function SettingsModal({ open, onClose }: Props) {
               <select
                 className="modal-input modal-select"
                 value={model}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => {
+                  const selected = e.target.value;
+                  setModel(selected);
+                  const info = models.find((m) => m.id === selected);
+                  if (info?.context_window) setContextWindow(info.context_window);
+                }}
               >
                 {models.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m.id} value={m.id}>{m.id}</option>
                 ))}
               </select>
             ) : (
@@ -138,6 +154,30 @@ export default function SettingsModal({ open, onClose }: Props) {
           </div>
           {modelError && <span className="model-fetch-error">{modelError}</span>}
         </div>
+
+        <label className="modal-label">
+          上下文窗口大小（tokens，0 = 未知）
+          <input
+            className="modal-input"
+            type="number"
+            min={0}
+            value={contextWindow}
+            onChange={(e) => setContextWindow(Math.max(0, Number(e.target.value)))}
+            placeholder="0"
+          />
+        </label>
+
+        <label className="modal-label">
+          自动压缩阈值（剩余 tokens 少于此值时触发）
+          <input
+            className="modal-input"
+            type="number"
+            min={0}
+            value={compressThreshold}
+            onChange={(e) => setCompressThreshold(Math.max(0, Number(e.target.value)))}
+            placeholder="1000"
+          />
+        </label>
 
         <div className="modal-label">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
