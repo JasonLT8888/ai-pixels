@@ -83,6 +83,14 @@ try {
   db.exec(`ALTER TABLE chats ADD COLUMN canvas_h INTEGER NOT NULL DEFAULT 32`);
 } catch { /* already exists */ }
 
+// Migration: add compression fields to chats
+try {
+  db.exec(`ALTER TABLE chats ADD COLUMN compressed_summary TEXT`);
+} catch { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE chats ADD COLUMN compress_before_id INTEGER`);
+} catch { /* already exists */ }
+
 // Migration: assign orphan messages to a default chat per project
 const orphanProjects = db.prepare(
   `SELECT DISTINCT project_id FROM conversations WHERE chat_id IS NULL`

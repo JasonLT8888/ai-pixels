@@ -27,6 +27,19 @@ export async function fetchChatMessages(chatId: number) {
   return res.json();
 }
 
+export async function compressChat(chatId: number, model?: string) {
+  const res = await fetch(`/api/chats/${chatId}/compress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: model || undefined }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: '压缩请求失败' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchConversations(projectId: number) {
   const res = await fetch(`/api/projects/${projectId}/conversations`);
   return res.json();

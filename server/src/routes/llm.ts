@@ -35,10 +35,15 @@ router.post('/chat', async (req: Request, res: Response) => {
     ? DEFAULT_SYSTEM_PROMPT + '\n\n' + extraPrompt
     : DEFAULT_SYSTEM_PROMPT;
 
-  // 3. Load conversation history by chat_id
-  const history = db.prepare(
-    'SELECT role, content, images FROM conversations WHERE chat_id = ? ORDER BY created_at ASC'
-  ).all(chat_id) as { role: string; content: string; images: string | null }[];
+  // 3. Load conversation history by chat_id (with IDs for compression filtering)
+  const historyWithIds = db.prepare(
+    'SELECT id, role, content, images FROM conversations WHERE chat_id = ? ORDER BY created_at ASC'
+  ).all(chat_id) as { id: number; role: string; content: string; images: string | null }[];
+
+  // 3b. Check for compressed context
+  const compressInfo = db.prepare(
+    'SELECT compressed_summary, compress_before_id FROM chats WHERE id = ?'
+  ).get(chat_id) as { compressed_summary: string | null; compress_before_id: number | null } | undefined;
 
   // 4. Save user message (store images JSON if present)
   const imagesJson = Array.isArray(images) && images.length > 0 ? JSON.stringify(images) : null;
@@ -68,8 +73,20 @@ router.post('/chat', async (req: Request, res: Response) => {
   if (systemPrompt) {
     messages.push({ role: 'system', content: systemPrompt + canvasContext });
   }
-  for (const h of history) {
-    messages.push({ role: h.role, content: buildContent(h.content, h.images) });
+
+  // If compressed context exists, use summary + only recent messages
+  if (compressInfo?.compressed_summary && compressInfo.compress_before_id) {
+    messages.push({ role: 'system', content: `[之前的对话摘要]\n${compressInfo.compressed_summary}` });
+    // Only include messages after the compression point
+    for (const h of historyWithIds) {
+      if (h.id > compressInfo.compress_before_id) {
+        messages.push({ role: h.role, content: buildContent(h.content, h.images) });
+      }
+    }
+  } else {
+    for (const h of historyWithIds) {
+      messages.push({ role: h.role, content: buildContent(h.content, h.images) });
+    }
   }
   messages.push({ role: 'user', content: buildContent(message, imagesJson) });
 
