@@ -618,10 +618,9 @@ export default function ChatPanel() {
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: newChat.id });
     chatDispatch({ type: 'SET_MESSAGES', messages: [] });
     chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
-    // Clear canvas and instructions for the new chat
-    const emptyInstructions: Instruction[] = [];
-    projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: emptyInstructions });
-    saveInstructions(project.projectId, emptyInstructions).catch(() => {});
+    const initialInstructions: Instruction[] = [['canvas', newChatW, newChatH]];
+    projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: initialInstructions });
+    saveInstructions(project.projectId, initialInstructions).catch(() => {});
     setShowSizePicker(false);
     setTab('chat');
   }, [project.projectId, newChatW, newChatH, chatDispatch, projectDispatch]);

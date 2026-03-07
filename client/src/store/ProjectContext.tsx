@@ -53,32 +53,54 @@ const initialState: ProjectState = {
   lastComment: null,
 };
 
+function getCanvasSizeFromInstructions(
+  instructions: Instruction[],
+  fallbackWidth: number,
+  fallbackHeight: number,
+) {
+  let width = fallbackWidth;
+  let height = fallbackHeight;
+
+  for (const instruction of instructions) {
+    if (!Array.isArray(instruction)) continue;
+    const [head, rawWidth, rawHeight] = instruction as unknown[];
+    if ((head === 'canvas' || head === 'C') && typeof rawWidth === 'number' && typeof rawHeight === 'number') {
+      width = Math.max(1, Math.min(4096, Math.round(rawWidth)));
+      height = Math.max(1, Math.min(4096, Math.round(rawHeight)));
+    }
+  }
+
+  return { width, height };
+}
+
 function reducer(state: ProjectState, action: ProjectAction): ProjectState {
   switch (action.type) {
-    case 'SET_PROJECT':
+    case 'SET_PROJECT': {
+      const { width, height } = getCanvasSizeFromInstructions(
+        action.instructions,
+        action.canvasWidth,
+        action.canvasHeight,
+      );
       return {
         ...state,
         projectId: action.projectId,
         instructions: action.instructions,
-        canvasWidth: action.canvasWidth,
-        canvasHeight: action.canvasHeight,
+        canvasWidth: width,
+        canvasHeight: height,
         currentStep: action.instructions.length,
       };
+    }
     case 'SET_INSTRUCTIONS': {
-      // Scan for canvas instruction to update dimensions
-      let w = state.canvasWidth;
-      let h = state.canvasHeight;
-      for (const inst of action.instructions) {
-        if (inst[0] === 'canvas') {
-          w = inst[1];
-          h = inst[2];
-        }
-      }
+      const { width, height } = getCanvasSizeFromInstructions(
+        action.instructions,
+        state.canvasWidth,
+        state.canvasHeight,
+      );
       return {
         ...state,
         instructions: action.instructions,
-        canvasWidth: w,
-        canvasHeight: h,
+        canvasWidth: width,
+        canvasHeight: height,
         currentStep: action.instructions.length,
         playing: false,
       };
