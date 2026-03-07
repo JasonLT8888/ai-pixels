@@ -1425,3 +1425,104 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── Context estimation bar ── */
+.chat-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.chat-context-tokens {
+  color: var(--text-dim);
+}
+
+.chat-context-compressed {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.chat-compress-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.chat-compress-btn:hover:not(:disabled) {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.chat-compress-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Compressed message styling ── */
+.chat-msg-compressed {
+  opacity: 0.5;
+}
+
+.chat-msg-compressed .chat-msg-content {
+  max-height: 60px;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-msg-compressed .chat-msg-content::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+
+/* ── Compression divider ── */
+.chat-compress-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.chat-compress-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+.chat-compress-divider-label {
+  font-size: 10px;
+  color: var(--accent);
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+/* ── Input wrapper (model selector + input area) ── */
+.chat-input-wrapper {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.chat-input-wrapper .chat-model-bar {
+  border-bottom: none;
+  padding: 6px 12px 0;
+}
+
+.chat-input-wrapper .chat-input-area {
+  border-top: none;
+}

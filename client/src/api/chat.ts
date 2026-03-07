@@ -27,6 +27,15 @@ export async function fetchChatMessages(chatId: number) {
   return res.json();
 }
 
+export async function compressChat(chatId: number, model?: string) {
+  const res = await fetch(`/api/chats/${chatId}/compress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: model || undefined }),
+  });
+  return res.json();
+}
+
 export async function fetchConversations(projectId: number) {
   const res = await fetch(`/api/projects/${projectId}/conversations`);
   return res.json();

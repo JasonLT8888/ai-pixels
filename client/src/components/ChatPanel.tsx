@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState, useMemo, Component, type ReactNode } from 'react';
 import { useChat, useChatDispatch } from '../store/ChatContext';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
-import { fetchChats, createChat, deleteChat, clearChatMessages, fetchChatMessages, sendChatMessage } from '../api/chat';
+import { fetchChats, createChat, deleteChat, clearChatMessages, fetchChatMessages, sendChatMessage, compressChat } from '../api/chat';
 import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
@@ -227,6 +227,19 @@ function AssistantContent({
 
 type ChatTab = 'chat' | 'history';
 
+// Token estimation constants
+const SYSTEM_PROMPT_TOKENS = 800;
+const AUTO_COMPRESS_THRESHOLD = 4000;
+
+/** Rough token estimate: CJK ~1.5 tokens/char, ASCII ~0.25 tokens/char */
+function estimateTokens(text: string): number {
+  let tokens = 0;
+  for (const ch of text) {
+    tokens += ch.charCodeAt(0) > 0x2e80 ? 1.5 : 0.25;
+  }
+  return Math.round(tokens);
+}
+
 /** History list with thumbnails */
 function HistoryTab({
   chatList,
@@ -312,8 +325,14 @@ export default function ChatPanel() {
       if (chats.length > 0) {
         const latest = chats[0];
         chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: latest.id });
-        const msgs = await fetchChatMessages(latest.id);
-        if (!cancelled) chatDispatch({ type: 'SET_MESSAGES', messages: msgs });
+        const data = await fetchChatMessages(latest.id);
+        if (!cancelled) {
+          const msgs = Array.isArray(data) ? data : data.messages || [];
+          chatDispatch({ type: 'SET_MESSAGES', messages: msgs });
+          if (data.compressed_summary !== undefined) {
+            chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: data.compressed_summary, compressBeforeId: data.compress_before_id });
+          }
+        }
       } else {
         // No chats — show size picker for first chat
         setShowSizePicker(true);
@@ -364,8 +383,12 @@ export default function ChatPanel() {
 
   const handleSwitchChat = useCallback(async (chatId: number) => {
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId });
-    const msgs = await fetchChatMessages(chatId);
+    const data = await fetchChatMessages(chatId);
+    const msgs = Array.isArray(data) ? data : data.messages || [];
     chatDispatch({ type: 'SET_MESSAGES', messages: msgs });
+    if (data.compressed_summary !== undefined) {
+      chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: data.compressed_summary, compressBeforeId: data.compress_before_id });
+    }
     setTab('chat'); // auto-switch to conversation view
   }, [chatDispatch]);
 
@@ -623,24 +646,46 @@ export default function ChatPanel() {
     chatDispatch,
   ]);
 
+  // Token estimation for context bar
+  const estimatedTokens = useMemo(() => {
+    let total = SYSTEM_PROMPT_TOKENS;
+    if (chat.compressedSummary) {
+      total += estimateTokens(chat.compressedSummary);
+    }
+    for (const msg of chat.messages) {
+      if (chat.compressBeforeId && msg.id && msg.id <= chat.compressBeforeId) continue;
+      total += estimateTokens(msg.content);
+    }
+    return total;
+  }, [chat.messages, chat.compressedSummary, chat.compressBeforeId]);
+
+  // Manual compress handler
+  const handleCompress = useCallback(async () => {
+    if (!chat.currentChatId || chat.compressing) return;
+    chatDispatch({ type: 'SET_COMPRESSING', compressing: true });
+    try {
+      const result = await compressChat(chat.currentChatId, chat.selectedModel || undefined);
+      if (result.error) {
+        chatDispatch({ type: 'SET_ERROR', error: result.error });
+      } else {
+        chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: result.compressed_summary, compressBeforeId: result.compress_before_id });
+      }
+    } catch (err: any) {
+      chatDispatch({ type: 'SET_ERROR', error: err.message || '压缩失败' });
+    } finally {
+      chatDispatch({ type: 'SET_COMPRESSING', compressing: false });
+    }
+  }, [chat.currentChatId, chat.compressing, chat.selectedModel, chatDispatch]);
+
+  // Auto-compress when token count exceeds threshold
+  useEffect(() => {
+    if (estimatedTokens > AUTO_COMPRESS_THRESHOLD && !chat.compressing && !chat.streaming && chat.currentChatId) {
+      handleCompress();
+    }
+  }, [estimatedTokens, chat.compressing, chat.streaming, chat.currentChatId, handleCompress]);
+
   return (
     <div className="chat-panel">
-      {/* Model selector bar */}
-      {chat.models.length > 0 && (
-        <div className="chat-model-bar">
-          <select
-            className="chat-model-select"
-            value={chat.selectedModel}
-            onChange={(e) => chatDispatch({ type: 'SET_SELECTED_MODEL', model: e.target.value })}
-          >
-            <option value="">默认模型</option>
-            {chat.models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
       {/* Tab bar */}
       <div className="chat-tab-bar">
         <button
@@ -663,6 +708,21 @@ export default function ChatPanel() {
           </div>
         )}
       </div>
+
+      {/* Context estimation bar */}
+      {tab === 'chat' && (
+        <div className="chat-context-bar">
+          <span>上下文 ≈ {estimatedTokens} tokens</span>
+          <button
+            className="chat-compress-btn"
+            onClick={handleCompress}
+            disabled={chat.compressing || chat.streaming}
+            title="压缩历史对话"
+          >
+            {chat.compressing ? '压缩中…' : '压缩'}
+          </button>
+        </div>
+      )}
 
       {/* Tab content */}
       {tab === 'chat' ? (
