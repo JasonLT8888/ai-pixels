@@ -15,6 +15,7 @@ export async function readSSEStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let fullText = '';
+  let receivedDone = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -29,26 +30,38 @@ export async function readSSEStream(
       if (!trimmed || !trimmed.startsWith('data: ')) continue;
       const data = trimmed.slice(6);
 
-      if (data === '[DONE]') continue;
+      if (data === '[DONE]') {
+        receivedDone = true;
+        continue;
+      }
 
+      let parsed: any;
       try {
-        const parsed = JSON.parse(data);
-        if (parsed.error) {
-          onError?.(parsed.error);
-          continue;
-        }
-        if (parsed.debug) {
-          onDebug?.(parsed.debug);
-          continue;
-        }
-        if (parsed.delta) {
-          fullText += parsed.delta;
-          onDelta(parsed.delta);
-        }
+        parsed = JSON.parse(data);
       } catch {
         // skip unparseable
+        continue;
+      }
+
+      if (parsed.error) {
+        onError?.(parsed.error);
+        throw new Error(parsed.error);
+      }
+      if (parsed.debug) {
+        onDebug?.(parsed.debug);
+        continue;
+      }
+      if (parsed.delta) {
+        fullText += parsed.delta;
+        onDelta(parsed.delta);
       }
     }
+  }
+
+  if (!receivedDone) {
+    const interruptedError = '连接中断，AI 回复未完成，请重试';
+    onError?.(interruptedError);
+    throw new Error(interruptedError);
   }
 
   return fullText;

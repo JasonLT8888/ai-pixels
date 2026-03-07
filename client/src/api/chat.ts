@@ -51,6 +51,7 @@ export async function sendChatMessage(
   model?: string,
   chatId?: number,
   images?: string[],
+  retryLastUser?: boolean,
 ): Promise<Response> {
   return fetch('/api/llm/chat', {
     method: 'POST',
@@ -61,6 +62,7 @@ export async function sendChatMessage(
       message,
       model: model || undefined,
       images: images?.length ? images : undefined,
+      retry_last_user: retryLastUser || undefined,
     }),
   });
 }

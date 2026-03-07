@@ -6,7 +6,7 @@ const router = Router();
 
 // POST /api/llm/chat — SSE streaming proxy to upstream LLM
 router.post('/chat', async (req: Request, res: Response) => {
-  const { project_id, chat_id, message, model: requestModel, images } = req.body;
+  const { project_id, chat_id, message, model: requestModel, images, retry_last_user } = req.body;
   if (!chat_id || !message) {
     return res.status(400).json({ error: 'chat_id and message are required' });
   }
@@ -47,9 +47,20 @@ router.post('/chat', async (req: Request, res: Response) => {
 
   // 4. Save user message (store images JSON if present)
   const imagesJson = Array.isArray(images) && images.length > 0 ? JSON.stringify(images) : null;
-  db.prepare(
-    'INSERT INTO conversations (project_id, chat_id, role, content, images) VALUES (?, ?, ?, ?, ?)'
-  ).run(projectId, chat_id, 'user', message, imagesJson);
+  const lastHistory = historyWithIds[historyWithIds.length - 1];
+  const reuseLastUserMessage = Boolean(
+    retry_last_user &&
+    lastHistory &&
+    lastHistory.role === 'user' &&
+    lastHistory.content === message &&
+    (lastHistory.images ?? null) === imagesJson,
+  );
+
+  if (!reuseLastUserMessage) {
+    db.prepare(
+      'INSERT INTO conversations (project_id, chat_id, role, content, images) VALUES (?, ?, ?, ?, ?)'
+    ).run(projectId, chat_id, 'user', message, imagesJson);
+  }
 
   // Helper: build OpenAI message content (text-only or multimodal)
   function buildContent(text: string, imgJson: string | null): string | any[] {
@@ -88,7 +99,9 @@ router.post('/chat', async (req: Request, res: Response) => {
       messages.push({ role: h.role, content: buildContent(h.content, h.images) });
     }
   }
-  messages.push({ role: 'user', content: buildContent(message, imagesJson) });
+  if (!reuseLastUserMessage) {
+    messages.push({ role: 'user', content: buildContent(message, imagesJson) });
+  }
 
   // 6. Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -137,6 +150,7 @@ router.post('/chat', async (req: Request, res: Response) => {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let upstreamDone = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -152,6 +166,7 @@ router.post('/chat', async (req: Request, res: Response) => {
         const data = trimmed.slice(6);
 
         if (data === '[DONE]') {
+          upstreamDone = true;
           continue;
         }
 
@@ -166,6 +181,10 @@ router.post('/chat', async (req: Request, res: Response) => {
           // skip unparseable chunks
         }
       }
+    }
+
+    if (!upstreamDone) {
+      throw new Error('Upstream stream interrupted');
     }
 
     // 9. Save assistant response with model

@@ -261,6 +261,19 @@ function MessageImages({
   );
 }
 
+function StreamingPlaceholder() {
+  return (
+    <div className="chat-streaming-placeholder" aria-live="polite" aria-label="AI 正在思考">
+      <div className="chat-streaming-status">AI 正在思考</div>
+      <div className="chat-streaming-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+    </div>
+  );
+}
+
 /** Renders assistant message with talk text + inline preview + push to canvas + self-check */
 function AssistantContent({
   content,
@@ -382,6 +395,30 @@ function AssistantContent({
 
 type ChatTab = 'chat' | 'history';
 
+type RetryRequest = {
+  prompt: string;
+  images: string[];
+  optimisticUserMessage: ChatMessage;
+};
+
+function normalizeRequestError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '请求失败，请重试';
+
+  if (/Failed to fetch/i.test(message)) {
+    return '连接已中断，请检查服务或网络后重试';
+  }
+
+  if (/No response body/i.test(message)) {
+    return '连接异常，未收到 AI 响应，请重试';
+  }
+
+  if (/interrupted|中断/i.test(message)) {
+    return '连接中断，AI 回复未完成，请重试';
+  }
+
+  return message;
+}
+
 // Token estimation constants
 const SYSTEM_PROMPT_TOKENS = 800;
 
@@ -460,6 +497,7 @@ export default function ChatPanel() {
   const [newChatW, setNewChatW] = useState(32);
   const [newChatH, setNewChatH] = useState(32);
   const [includeLastUserRequirement, setIncludeLastUserRequirement] = useState(true);
+  const [lastFailedRequest, setLastFailedRequest] = useState<RetryRequest | null>(null);
   const lastCompressMsgCount = useRef<number>(0);
   const modelsInfoRef = useRef<ModelInfo[]>([]);
 
@@ -537,6 +575,10 @@ export default function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.streamingText]);
 
+  useEffect(() => {
+    setLastFailedRequest(null);
+  }, [chat.currentChatId]);
+
   const handleNewChat = useCallback(() => {
     if (!project.projectId) return;
     setShowSizePicker(true);
@@ -591,6 +633,7 @@ export default function ChatPanel() {
       chatDispatch({ type: 'SET_ERROR', error: null });
       textareaRef.current?.focus();
     } catch (err: any) {
+      setLastFailedRequest(null);
       chatDispatch({ type: 'SET_ERROR', error: err.message || '处理图片失败' });
     }
   }, [chat.inputImages, chatDispatch]);
@@ -640,24 +683,20 @@ export default function ChatPanel() {
     }
   }, [chat.currentChatId, chat.chatList, project.projectId, chatDispatch, handleSwitchChat, handleNewChat]);
 
-  const handleSend = useCallback(async () => {
-    const text = chat.inputText.trim();
-    const outgoingImages = chat.inputImages;
-    const messageText = text || (outgoingImages.length > 0 ? '请参考这些图片进行创作。' : '');
-    if (!messageText || chat.streaming || !project.projectId || !chat.currentChatId) return;
+  const executeAssistantRequest = useCallback(async (
+    request: RetryRequest,
+    options?: { appendUserMessage?: boolean; retryLastUser?: boolean },
+  ) => {
+    if (chat.streaming || !project.projectId || !chat.currentChatId) return;
 
-    chatDispatch({ type: 'SET_INPUT', text: '' });
-    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
+    const appendUserMessage = options?.appendUserMessage ?? true;
+    const retryLastUser = options?.retryLastUser ?? false;
+
+    setLastFailedRequest(null);
     chatDispatch({ type: 'SET_ERROR', error: null });
-    chatDispatch({
-      type: 'ADD_MESSAGE',
-      message: {
-        project_id: project.projectId,
-        role: 'user',
-        content: messageText,
-        images: outgoingImages.length > 0 ? JSON.stringify(outgoingImages) : null,
-      },
-    });
+    if (appendUserMessage) {
+      chatDispatch({ type: 'ADD_MESSAGE', message: request.optimisticUserMessage });
+    }
     chatDispatch({ type: 'SET_STREAMING', streaming: true });
     chatDispatch({ type: 'RESET_STREAMING_TEXT' });
 
@@ -666,25 +705,28 @@ export default function ChatPanel() {
     try {
       const response = await sendChatMessage(
         project.projectId,
-        messageText,
+        request.prompt,
         chat.selectedModel || undefined,
         chat.currentChatId,
-        outgoingImages,
+        request.images,
+        retryLastUser,
       );
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Request failed' }));
-        chatDispatch({ type: 'SET_ERROR', error: err.error || 'Request failed' });
-        chatDispatch({ type: 'SET_STREAMING', streaming: false });
-        return;
+        throw new Error(err.error || 'Request failed');
       }
 
       const fullText = await readSSEStream(
         response,
         (delta) => chatDispatch({ type: 'APPEND_STREAMING_TEXT', delta }),
-        (error) => chatDispatch({ type: 'SET_ERROR', error }),
+        undefined,
         (debug) => { debugInfo = debug; },
       );
+
+      if (!fullText.trim()) {
+        throw new Error('AI 未返回内容，请重试');
+      }
 
       chatDispatch({
         type: 'ADD_MESSAGE',
@@ -697,7 +739,6 @@ export default function ChatPanel() {
         },
       });
 
-      // Update last_assistant_content in chatList for history thumbnail
       chatDispatch({
         type: 'SET_CHAT_LIST',
         chatList: chat.chatList.map((c) =>
@@ -706,13 +747,38 @@ export default function ChatPanel() {
             : c
         ),
       });
-    } catch (err: any) {
-      chatDispatch({ type: 'SET_ERROR', error: err.message || 'Network error' });
+
+      setLastFailedRequest(null);
+    } catch (err) {
+      setLastFailedRequest(request);
+      chatDispatch({ type: 'SET_ERROR', error: normalizeRequestError(err) });
     } finally {
       chatDispatch({ type: 'SET_STREAMING', streaming: false });
       chatDispatch({ type: 'RESET_STREAMING_TEXT' });
     }
-  }, [chat.inputText, chat.inputImages, chat.streaming, chat.selectedModel, chat.currentChatId, chat.chatList, project.projectId, chatDispatch]);
+  }, [chat.streaming, chat.selectedModel, chat.currentChatId, chat.chatList, project.projectId, chatDispatch]);
+
+  const handleSend = useCallback(async () => {
+    const text = chat.inputText.trim();
+    const outgoingImages = chat.inputImages;
+    const messageText = text || (outgoingImages.length > 0 ? '请参考这些图片进行创作。' : '');
+    if (!messageText || chat.streaming || !project.projectId || !chat.currentChatId) return;
+
+    const request: RetryRequest = {
+      prompt: messageText,
+      images: outgoingImages,
+      optimisticUserMessage: {
+        project_id: project.projectId,
+        role: 'user',
+        content: messageText,
+        images: outgoingImages.length > 0 ? JSON.stringify(outgoingImages) : null,
+      },
+    };
+
+    chatDispatch({ type: 'SET_INPUT', text: '' });
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
+    await executeAssistantRequest(request);
+  }, [chat.inputText, chat.inputImages, chat.streaming, chat.currentChatId, project.projectId, chatDispatch, executeAssistantRequest]);
 
   // Self-check: render instructions to image, send to AI for review
   const handleSelfCheck = useCallback(async (instructions: Instruction[]) => {
@@ -722,70 +788,17 @@ export default function ChatPanel() {
 
     const prompt = '请检查这张图片，这是你刚才生成的像素画渲染结果。请仔细对比你的创作意图，找出画面中不准确或可以改进的地方，然后输出优化后的完整指令。';
 
-    chatDispatch({ type: 'SET_ERROR', error: null });
-    chatDispatch({
-      type: 'ADD_MESSAGE',
-      message: {
+    await executeAssistantRequest({
+      prompt,
+      images: [dataUrl],
+      optimisticUserMessage: {
         project_id: project.projectId,
         role: 'user',
         content: '[自行检查] ' + prompt,
         images: JSON.stringify([dataUrl]),
       },
     });
-    chatDispatch({ type: 'SET_STREAMING', streaming: true });
-    chatDispatch({ type: 'RESET_STREAMING_TEXT' });
-
-    let debugInfo: { model: string; messages: { role: string; content: string }[] } | undefined;
-
-    try {
-      const response = await sendChatMessage(
-        project.projectId,
-        prompt,
-        chat.selectedModel || undefined,
-        chat.currentChatId,
-        [dataUrl],
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: 'Request failed' }));
-        chatDispatch({ type: 'SET_ERROR', error: err.error || 'Request failed' });
-        chatDispatch({ type: 'SET_STREAMING', streaming: false });
-        return;
-      }
-
-      const fullText = await readSSEStream(
-        response,
-        (delta) => chatDispatch({ type: 'APPEND_STREAMING_TEXT', delta }),
-        (error) => chatDispatch({ type: 'SET_ERROR', error }),
-        (debug) => { debugInfo = debug; },
-      );
-
-      chatDispatch({
-        type: 'ADD_MESSAGE',
-        message: {
-          project_id: project.projectId,
-          role: 'assistant',
-          content: fullText,
-          model: debugInfo?.model,
-          _debug: debugInfo,
-        },
-      });
-
-      chatDispatch({
-        type: 'SET_CHAT_LIST',
-        chatList: chat.chatList.map((c) =>
-          c.id === chat.currentChatId
-            ? { ...c, message_count: c.message_count + 2, last_assistant_content: fullText }
-            : c
-        ),
-      });
-    } catch (err: any) {
-      chatDispatch({ type: 'SET_ERROR', error: err.message || 'Network error' });
-    } finally {
-      chatDispatch({ type: 'SET_STREAMING', streaming: false });
-      chatDispatch({ type: 'RESET_STREAMING_TEXT' });
-    }
-  }, [chat.streaming, chat.selectedModel, chat.currentChatId, chat.chatList, project.projectId, chatDispatch]);
+  }, [chat.streaming, chat.currentChatId, project.projectId, executeAssistantRequest]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -817,73 +830,24 @@ export default function ChatPanel() {
       ? `[反馈错误] ${formatError}（已附带上一条需求）`
       : `[反馈错误] ${formatError}`;
 
-    chatDispatch({ type: 'SET_ERROR', error: null });
-    chatDispatch({
-      type: 'ADD_MESSAGE',
-      message: { project_id: project.projectId, role: 'user', content: feedbackLabel },
+    await executeAssistantRequest({
+      prompt,
+      images: [],
+      optimisticUserMessage: { project_id: project.projectId, role: 'user', content: feedbackLabel },
     });
-    chatDispatch({ type: 'SET_STREAMING', streaming: true });
-    chatDispatch({ type: 'RESET_STREAMING_TEXT' });
-
-    let debugInfo: { model: string; messages: { role: string; content: string }[] } | undefined;
-
-    try {
-      const response = await sendChatMessage(
-        project.projectId,
-        prompt,
-        chat.selectedModel || undefined,
-        chat.currentChatId,
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: 'Request failed' }));
-        chatDispatch({ type: 'SET_ERROR', error: err.error || 'Request failed' });
-        chatDispatch({ type: 'SET_STREAMING', streaming: false });
-        return;
-      }
-
-      const fullText = await readSSEStream(
-        response,
-        (delta) => chatDispatch({ type: 'APPEND_STREAMING_TEXT', delta }),
-        (error) => chatDispatch({ type: 'SET_ERROR', error }),
-        (debug) => { debugInfo = debug; },
-      );
-
-      chatDispatch({
-        type: 'ADD_MESSAGE',
-        message: {
-          project_id: project.projectId,
-          role: 'assistant',
-          content: fullText,
-          model: debugInfo?.model,
-          _debug: debugInfo,
-        },
-      });
-
-      chatDispatch({
-        type: 'SET_CHAT_LIST',
-        chatList: chat.chatList.map((c) =>
-          c.id === chat.currentChatId
-            ? { ...c, message_count: c.message_count + 2, last_assistant_content: fullText }
-            : c
-        ),
-      });
-    } catch (err: any) {
-      chatDispatch({ type: 'SET_ERROR', error: err.message || 'Network error' });
-    } finally {
-      chatDispatch({ type: 'SET_STREAMING', streaming: false });
-      chatDispatch({ type: 'RESET_STREAMING_TEXT' });
-    }
   }, [
     chat.streaming,
-    chat.selectedModel,
     chat.currentChatId,
-    chat.chatList,
     chat.messages,
     includeLastUserRequirement,
     project.projectId,
-    chatDispatch,
+    executeAssistantRequest,
   ]);
+
+  const handleRetryLastRequest = useCallback(async () => {
+    if (!lastFailedRequest || chat.streaming) return;
+    await executeAssistantRequest(lastFailedRequest, { appendUserMessage: false, retryLastUser: true });
+  }, [lastFailedRequest, chat.streaming, executeAssistantRequest]);
 
   // Token estimation for context bar
   const estimatedTokens = useMemo(() => {
@@ -905,11 +869,13 @@ export default function ChatPanel() {
     try {
       const result = await compressChat(chat.currentChatId, chat.selectedModel || undefined);
       if (result.error) {
+        setLastFailedRequest(null);
         chatDispatch({ type: 'SET_ERROR', error: result.error });
       } else {
         chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: result.compressed_summary, compressBeforeId: result.compress_before_id });
       }
     } catch (err: any) {
+      setLastFailedRequest(null);
       chatDispatch({ type: 'SET_ERROR', error: err.message || '压缩失败' });
     } finally {
       chatDispatch({ type: 'SET_COMPRESSING', compressing: false });
@@ -1017,6 +983,14 @@ export default function ChatPanel() {
                 })()}
               </div>
             ))}
+            {chat.streaming && !chat.streamingText && (
+              <div className="chat-msg chat-msg-assistant chat-msg-pending">
+                <div className="chat-msg-role">AI</div>
+                <div className="chat-msg-content chat-msg-content-pending">
+                  <StreamingPlaceholder />
+                </div>
+              </div>
+            )}
             {chat.streaming && chat.streamingText && (
               <div className="chat-msg chat-msg-assistant">
                 <div className="chat-msg-role">AI</div>
@@ -1026,7 +1000,20 @@ export default function ChatPanel() {
                 </div>
               </div>
             )}
-            {chat.error && <div className="chat-error">{chat.error}</div>}
+            {chat.error && (
+              <div className="chat-error-row">
+                <div className="chat-error">{chat.error}</div>
+                {lastFailedRequest && !chat.streaming && (
+                  <button
+                    className="chat-error-retry-btn"
+                    onClick={handleRetryLastRequest}
+                    title="重发上一条失败请求"
+                  >
+                    重发
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <div className="chat-input-wrapper">
             <div className="chat-context-bar">
@@ -1115,7 +1102,7 @@ export default function ChatPanel() {
                 onClick={handleSend}
                 disabled={chat.streaming || (!chat.inputText.trim() && chat.inputImages.length === 0)}
               >
-                {chat.streaming ? '…' : '发送'}
+                {chat.streaming ? '等待中…' : '发送'}
               </button>
             </div>
           </div>
