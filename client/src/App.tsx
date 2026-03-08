@@ -21,6 +21,7 @@ export default function App() {
   const DEFAULT_INSTR_W = 260;
   const DEFAULT_CHAT_W = 320;
   const LAYOUT_KEY = 'ai-pixels-layout';
+  const STEP_STATE_KEY = 'ai-pixels-step-state';
 
   const readSaved = () => {
     try {
@@ -33,10 +34,27 @@ export default function App() {
   const [instrWidth, setInstrWidth] = useState(() => readSaved()?.instrWidth ?? DEFAULT_INSTR_W);
   const [chatWidth, setChatWidth] = useState(() => readSaved()?.chatWidth ?? DEFAULT_CHAT_W);
 
+  const readSavedSteps = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(STEP_STATE_KEY);
+      if (raw) return JSON.parse(raw) as Record<string, number>;
+    } catch {
+      // ignore malformed saved step state
+    }
+    return {} as Record<string, number>;
+  }, []);
+
   // Save to localStorage whenever widths change
   useEffect(() => {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify({ instrWidth, chatWidth }));
   }, [instrWidth, chatWidth]);
+
+  useEffect(() => {
+    if (!state.projectId) return;
+    const savedSteps = readSavedSteps();
+    savedSteps[String(state.projectId)] = state.currentStep;
+    localStorage.setItem(STEP_STATE_KEY, JSON.stringify(savedSteps));
+  }, [state.projectId, state.currentStep, readSavedSteps]);
 
   const resetLayout = useCallback(() => {
     setInstrWidth(DEFAULT_INSTR_W);
@@ -123,11 +141,16 @@ export default function App() {
           canvasWidth: project.canvas_w,
           canvasHeight: project.canvas_h,
         });
+
+        const savedStep = readSavedSteps()[String(project.id)];
+        if (typeof savedStep === 'number') {
+          dispatch({ type: 'GO_TO_STEP', step: savedStep });
+        }
       } catch {
         // 后端未启动时静默失败，仍可离线使用
       }
     })();
-  }, [dispatch]);
+  }, [dispatch, readSavedSteps]);
 
   return (
     <div className="app">

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useCallback, useState, useMemo, Component, type ReactNode } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo, useDeferredValue, Component, type ReactNode } from 'react';
 import { useChat, useChatDispatch } from '../store/ChatContext';
-import { useProject, useProjectDispatch } from '../store/ProjectContext';
+import { getHiddenStepCount, getVisibleStepCount, useProject, useProjectDispatch } from '../store/ProjectContext';
 import { fetchChats, createChat, deleteChat, clearChatMessages, clearProjectChats, fetchChatMessages, sendChatMessage, compressChat } from '../api/chat';
 import { fetchLLMConfig, fetchModels, type ModelInfo } from '../api/config';
 import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
+import { parseStreamingAssistantPreview } from '../utils/streaming-preview';
 import { buildProjectInstructionsFromActions, normalizeProjectInstructions } from 'shared/src/instruction-format';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
 import { executeInstructions } from '../canvas/renderer';
@@ -192,19 +193,115 @@ function findLastUserRequirement(messages: ChatMessage[], beforeIndex: number): 
   return null;
 }
 
+function summarizePromptText(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '(空)';
+  if (normalized.length <= maxChars) return normalized;
+  return normalized.slice(0, maxChars) + '...';
+}
+
+function formatSelfCheckContextMessage(message: ChatMessage, maxChars: number): string {
+  const roleLabel = message.role === 'user' ? '用户' : 'AI';
+  const imageCount = normalizeMessageImages(message.images).length;
+  const imageSuffix = imageCount > 0 ? ` [附图 ${imageCount} 张]` : '';
+  return `${roleLabel}${imageSuffix}: ${summarizePromptText(message.content, maxChars)}`;
+}
+
+function buildSelfCheckContext(messages: ChatMessage[], assistantIndex: number): string {
+  const assistantMessage = messages[assistantIndex];
+  if (!assistantMessage || assistantMessage.role !== 'assistant') {
+    return '未找到待检查的上一条 AI 回复，请仍然根据当前渲染图和聊天历史自行判断问题并修正。';
+  }
+
+  const recentMessages = messages
+    .slice(Math.max(0, assistantIndex - 4), assistantIndex + 1)
+    .filter((message) => message.role === 'user' || message.role === 'assistant');
+
+  const contextLines = recentMessages.map((message, index) => {
+    const isTarget = index === recentMessages.length - 1;
+    const limit = isTarget ? 2000 : 500;
+    const prefix = isTarget ? '[待检查的上一条 AI 回复] ' : '';
+    return prefix + formatSelfCheckContextMessage(message, limit);
+  });
+
+  return ['以下是与当前图片最相关的最近对话上下文：', ...contextLines].join('\n');
+}
+
+function isSelfCheckMessage(message: ChatMessage): boolean {
+  if (message.role !== 'user') return false;
+
+  const text = message.content.trim();
+  if (text.startsWith('[自行检查]')) return true;
+
+  return (
+    text.includes('请检查这张图片，这是你刚才生成的像素画渲染结果。') &&
+    text.includes('待检查的上一条 AI 回复')
+  );
+}
+
+function getUserMessageDisplayContent(message: ChatMessage): string {
+  if (!isSelfCheckMessage(message)) {
+    return message.content;
+  }
+
+  const imageCount = normalizeMessageImages(message.images).length;
+  const imageLabel = imageCount > 0 ? `，附带 ${imageCount} 张参考图` : '';
+  return `[自行检查] 结合上一条 AI 回复和最近上下文复核当前画面${imageLabel}`;
+}
+
 /** Prepend canvas instruction to an instruction list */
 function withCanvas(instructions: Instruction[], w: number, h: number): Instruction[] {
   return buildProjectInstructionsFromActions(instructions, { width: w, height: h });
 }
 
+function useElementVisibility<T extends HTMLElement>(rootMargin = '0px') {
+  const elementRef = useRef<T | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const node = elementRef.current;
+    if (!node) return;
+
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      setIsVisible(entry?.isIntersecting ?? false);
+    }, { rootMargin });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [rootMargin]);
+
+  return { elementRef, isVisible };
+}
+
+function PreviewPlaceholder({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`chat-preview-placeholder${compact ? ' chat-preview-placeholder-compact' : ''}`}>
+      <span>进入可视区后渲染预览</span>
+    </div>
+  );
+}
+
 /** Mini canvas preview for a set of instructions */
-function ActionPreview({ instructions, className }: { instructions: Instruction[]; className?: string }) {
+function ActionPreview({
+  instructions,
+  className,
+  upToStep,
+}: {
+  instructions: Instruction[];
+  className?: string;
+  upToStep?: number;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (!canvasRef.current || instructions.length === 0) return;
     try {
-      const result = executeInstructions(instructions);
+      const result = executeInstructions(instructions, upToStep);
       const canvas = canvasRef.current;
       canvas.width = result.width;
       canvas.height = result.height;
@@ -213,19 +310,102 @@ function ActionPreview({ instructions, className }: { instructions: Instruction[
     } catch {
       // Render failed — leave canvas blank
     }
-  }, [instructions]);
+  }, [instructions, upToStep]);
 
   return <canvas ref={canvasRef} className={className || 'action-preview-canvas'} />;
 }
 
+function ActionSplitPreview({ instructions }: { instructions: Instruction[] }) {
+  const { elementRef, isVisible } = useElementVisibility<HTMLDivElement>('160px 0px');
+  const hiddenStepCount = useMemo(() => getHiddenStepCount(instructions), [instructions]);
+  const visibleStepCount = useMemo(() => getVisibleStepCount(instructions), [instructions]);
+  const [previewStep, setPreviewStep] = useState(() => {
+    if (visibleStepCount === 0) return instructions.length;
+    return hiddenStepCount + 1;
+  });
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    if (visibleStepCount === 0) {
+      setPreviewStep(instructions.length);
+      return;
+    }
+
+    const firstVisibleStep = hiddenStepCount + 1;
+    const lastVisibleStep = instructions.length;
+    setPreviewStep((current) => {
+      if (current < firstVisibleStep || current > lastVisibleStep) {
+        return firstVisibleStep;
+      }
+      return current;
+    });
+
+    const timerId = window.setInterval(() => {
+      setPreviewStep((current) => {
+        if (current >= lastVisibleStep) {
+          return firstVisibleStep;
+        }
+        return current + 1;
+      });
+    }, 480);
+
+    return () => window.clearInterval(timerId);
+  }, [hiddenStepCount, instructions.length, isVisible, visibleStepCount]);
+
+  const currentVisibleStep = visibleStepCount === 0
+    ? 0
+    : Math.max(1, previewStep - hiddenStepCount);
+
+  return (
+    <div className="chat-actions-split-preview" ref={elementRef}>
+      <div className="chat-actions-preview-panel">
+        <div className="chat-actions-preview-header">
+          <span>过程回放</span>
+          <span>{currentVisibleStep} / {visibleStepCount || 0}</span>
+        </div>
+        <div className="chat-actions-preview chat-actions-preview-dual">
+          {isVisible ? (
+            <ActionPreview
+              instructions={instructions}
+              upToStep={visibleStepCount === 0 ? instructions.length : previewStep}
+            />
+          ) : (
+            <PreviewPlaceholder />
+          )}
+        </div>
+      </div>
+      <div className="chat-actions-preview-panel">
+        <div className="chat-actions-preview-header">
+          <span>最终结果</span>
+          <span>{visibleStepCount} 步</span>
+        </div>
+        <div className="chat-actions-preview chat-actions-preview-dual">
+          {isVisible ? <ActionPreview instructions={instructions} /> : <PreviewPlaceholder />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Thumbnail preview extracted from last assistant content */
-function ChatThumbnail({ content }: { content: string }) {
+function ChatThumbnail({ content, canvasW, canvasH }: { content: string; canvasW: number; canvasH: number }) {
+  const { elementRef, isVisible } = useElementVisibility<HTMLDivElement>('120px 0px');
   const parsed = useMemo(() => safeParse(content), [content]);
-  if (parsed.instructions.length === 0) return null;
+  const thumbnailInstructions = useMemo(
+    () => parsed.instructions.length > 0 ? withCanvas(parsed.instructions, canvasW, canvasH) : [],
+    [parsed.instructions, canvasW, canvasH],
+  );
+
+  if (thumbnailInstructions.length === 0) return null;
   return (
     <RenderErrorBoundary fallback={null}>
-      <div className="chat-history-thumb">
-        <ActionPreview instructions={parsed.instructions} className="chat-history-thumb-canvas" />
+      <div className="chat-history-thumb" ref={elementRef}>
+        {isVisible ? (
+          <ActionPreview instructions={thumbnailInstructions} className="chat-history-thumb-canvas" />
+        ) : (
+          <PreviewPlaceholder compact />
+        )}
       </div>
     </RenderErrorBoundary>
   );
@@ -252,7 +432,7 @@ function MessageImages({
             rel="noreferrer"
             title={`查看图片 ${index + 1}`}
           >
-            <img className="chat-msg-image" src={image} alt={`消息图片 ${index + 1}`} />
+            <img className="chat-msg-image" src={image} alt={`消息图片 ${index + 1}`} loading="lazy" decoding="async" />
           </a>
         ))}
       </div>
@@ -274,6 +454,65 @@ function StreamingPlaceholder() {
         <span />
         <span />
       </div>
+    </div>
+  );
+}
+
+function StreamingAssistantContent({
+  rawText,
+  canvasW,
+  canvasH,
+}: {
+  rawText: string;
+  canvasW: number;
+  canvasH: number;
+}) {
+  const deferredRawText = useDeferredValue(rawText);
+  const preview = useMemo(() => parseStreamingAssistantPreview(deferredRawText), [deferredRawText]);
+  const previewInstructions = useMemo(
+    () => preview.actions.length > 0 ? withCanvas(preview.actions, canvasW, canvasH) : [],
+    [preview.actions, canvasW, canvasH],
+  );
+
+  if (!preview.hasStructuredContent) {
+    return (
+      <>
+        {rawText}
+        <span className="chat-cursor">▌</span>
+      </>
+    );
+  }
+
+  const talkText = preview.talkStarted
+    ? preview.talk
+    : (preview.actionsStarted ? '正在生成说明文字…' : '正在组织回复…');
+
+  return (
+    <div className="chat-streaming-structured">
+      <div className="chat-msg-talk chat-msg-talk-streaming">
+        {talkText}
+        <span className="chat-cursor">▌</span>
+      </div>
+      {preview.actionsStarted && (
+        <div className="chat-msg-actions chat-msg-actions-streaming">
+          {previewInstructions.length > 0 && (
+            <div className="chat-actions-preview chat-actions-preview-streaming">
+              <ActionPreview instructions={previewInstructions} />
+            </div>
+          )}
+          <div className="chat-streaming-actions-status">
+            <span className="chat-streaming-actions-label">AI 正在生成画面指令</span>
+            <span className="chat-streaming-actions-count">已接收 {preview.actions.length} 条</span>
+            {!preview.actionsComplete && (
+              <div className="chat-streaming-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -314,12 +553,13 @@ function AssistantContent({
   );
 
   const handlePushToCanvas = useCallback(() => {
-    if (project.instructions.length > 0) {
+    if (getVisibleStepCount(project.instructions) > 0) {
       if (!window.confirm('当前画布已有内容，推送将覆盖现有内容，是否继续？')) {
         return;
       }
     }
     projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: fullInstructions });
+    projectDispatch({ type: 'LAST_STEP' });
     if (project.projectId) {
       saveInstructions(project.projectId, fullInstructions).catch(() => {});
     }
@@ -359,9 +599,7 @@ function AssistantContent({
       )}
       {hasActions && (
         <div className="chat-msg-actions">
-          <div className="chat-actions-preview">
-            <ActionPreview instructions={fullInstructions} />
-          </div>
+          <ActionSplitPreview instructions={fullInstructions} />
           <div className="chat-msg-actions-bar">
             <button
               className="chat-actions-toggle"
@@ -481,7 +719,7 @@ function HistoryTab({
             onClick={() => onSwitch(c.id)}
           >
             {c.last_assistant_content && (
-              <ChatThumbnail content={c.last_assistant_content} />
+              <ChatThumbnail content={c.last_assistant_content} canvasW={c.canvas_w} canvasH={c.canvas_h} />
             )}
             <div className="chat-history-item-info">
               <span className="chat-history-item-title">{c.title}</span>
@@ -841,12 +1079,18 @@ export default function ChatPanel() {
   }, [chat.inputText, chat.inputImages, chat.streaming, chat.currentChatId, project.projectId, chatDispatch, executeAssistantRequest]);
 
   // Self-check: render instructions to image, send to AI for review
-  const handleSelfCheck = useCallback(async (instructions: Instruction[]) => {
+  const handleSelfCheck = useCallback(async (instructions: Instruction[], assistantIndex: number) => {
     if (chat.streaming || !project.projectId || !chat.currentChatId) return;
 
     const dataUrl = renderInstructionsToDataUrl(instructions);
+    const contextBlock = buildSelfCheckContext(chat.messages, assistantIndex);
 
-    const prompt = '请检查这张图片，这是你刚才生成的像素画渲染结果。请仔细对比你的创作意图，找出画面中不准确或可以改进的地方，然后输出优化后的完整指令。';
+    const prompt = [
+      '请检查这张图片，这是你刚才生成的像素画渲染结果。',
+      '你必须结合下面给出的最近对话上下文，尤其是“待检查的上一条 AI 回复”，判断当前画面是否真正实现了你刚才承诺的内容、构图和细节。',
+      contextBlock,
+      '请先简短说明当前结果与原计划的偏差，再输出优化后的完整 JSON。格式要求仍然是 {"talk":"...","actions":[...]}，不要输出 Markdown 代码块。',
+    ].join('\n\n');
 
     await executeAssistantRequest({
       prompt,
@@ -854,11 +1098,11 @@ export default function ChatPanel() {
       optimisticUserMessage: {
         project_id: project.projectId,
         role: 'user',
-        content: '[自行检查] ' + prompt,
+        content: '[自行检查] 基于上一条 AI 回复和最近上下文进行画面复核',
         images: JSON.stringify([dataUrl]),
       },
     });
-  }, [chat.streaming, chat.currentChatId, project.projectId, executeAssistantRequest]);
+  }, [chat.streaming, chat.currentChatId, chat.messages, project.projectId, executeAssistantRequest]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1020,7 +1264,7 @@ export default function ChatPanel() {
                           content={msg.content}
                           canvasW={chatCanvasW}
                           canvasH={chatCanvasH}
-                          onSelfCheck={!chat.streaming ? handleSelfCheck : undefined}
+                          onSelfCheck={!chat.streaming ? (instructions) => handleSelfCheck(instructions, i) : undefined}
                           onSendPreviewToInput={!chat.streaming ? handleSendPreviewImageToInput : undefined}
                           formatError={formatError}
                           onFormatFeedback={
@@ -1032,7 +1276,7 @@ export default function ChatPanel() {
                           onToggleIncludeLastUserRequirement={setIncludeLastUserRequirement}
                         />
                       </RenderErrorBoundary>
-                    : msg.content}
+                    : getUserMessageDisplayContent(msg)}
                   <MessageImages
                     images={msgImages}
                     onSendToInput={msg.role === 'assistant' ? handleSendImagesToInput : undefined}
@@ -1054,9 +1298,12 @@ export default function ChatPanel() {
             {chat.streaming && chat.streamingText && (
               <div className="chat-msg chat-msg-assistant">
                 <div className="chat-msg-role">AI</div>
-                <div className="chat-msg-content">
-                  {chat.streamingText}
-                  <span className="chat-cursor">▌</span>
+                <div className="chat-msg-content chat-msg-content-pending">
+                  <StreamingAssistantContent
+                    rawText={chat.streamingText}
+                    canvasW={chatCanvasW}
+                    canvasH={chatCanvasH}
+                  />
                 </div>
               </div>
             )}

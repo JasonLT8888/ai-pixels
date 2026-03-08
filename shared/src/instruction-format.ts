@@ -286,6 +286,19 @@ export function normalizeActionInstructions(rawInstructions: unknown[]): ActionI
   return instructions as ActionInstruction[];
 }
 
+export function normalizeSingleActionInstruction(rawInstruction: unknown): ActionInstruction {
+  if (!Array.isArray(rawInstruction)) {
+    throw new Error('action 不是数组');
+  }
+
+  const instruction = parseInstruction(rawInstruction);
+  if (instruction[0] === 'canvas') {
+    throw new Error('AI actions 不允许包含 canvas 指令');
+  }
+
+  return instruction as ActionInstruction;
+}
+
 export function normalizeProjectInstructions(rawInstructions: unknown[], fallbackCanvas?: CanvasConfig): Instruction[] {
   if (!Array.isArray(rawInstructions)) {
     throw new Error('instructions 必须是数组');
