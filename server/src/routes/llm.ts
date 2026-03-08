@@ -80,7 +80,7 @@ router.post('/chat', async (req: Request, res: Response) => {
   }
 
   // 5. Build messages array — inject canvas size context into system prompt
-  const canvasContext = `\n\n## 当前画布\n画布尺寸已由用户设定为 ${canvasW}×${canvasH}，你不需要也不允许输出 canvas/C 指令。系统会自动在最终项目指令最前面补上画布初始化。若当前只是和用户讨论、不需要绘图，actions 可以为空数组；若需要绘图，则必须遵守以下顺序：第 1 条必须是 pal，后续只能输出 p、P、r、e、l、f、#；禁止输出 c/color 指令；每条绘图指令必须显式携带 palette colorIndex。`;
+  const canvasContext = `\n\n## 当前画布\n画布尺寸已由用户设定为 ${canvasW}×${canvasH}，你不需要也不允许输出 canvas/C 指令。系统会自动在最终项目指令最前面补上画布初始化。若当前只是和用户讨论、不需要绘图，actions 可以为空数组；若需要绘图，则 talk 必须先简要描述准备画出的内容与构图，再按顺序说明作画步骤，推荐使用“先……再……最后……”。随后 actions 必须与这份步骤规划基本一致，并遵守以下顺序：第 1 条必须是 pal，后续只能输出 p、P、r、e、l、f、#；禁止输出 c/color 指令；每条绘图指令必须显式携带 palette colorIndex。`;
   const messages: { role: string; content: string | any[] }[] = [];
   if (systemPrompt) {
     messages.push({ role: 'system', content: systemPrompt + canvasContext });

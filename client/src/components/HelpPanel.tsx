@@ -39,14 +39,14 @@ export default function HelpPanel() {
         <h4>返回格式</h4>
         <p className="help-note">AI 返回 JSON 对象，包含对话文字和绘图指令：</p>
         <pre className="help-code">{`{
-  "talk": "好的，给你画一个红色方块和蓝色圆形",
+  "talk": "我会画一个左侧红色方块和右侧蓝色圆形，形成简单对比构图。先定义红蓝两色调色板，再画方块，最后补上圆形。",
   "actions": [
     ["pal", ["#f00", "#00f"]],
     ["r", 2, 2, 10, 10, 0],
     ["e", 20, 16, 6, 6, 1]
   ]
 }`}</pre>
-        <p className="help-note">AI 不输出 canvas；系统会按当前对话画布尺寸自动补到项目指令最前面。</p>
+        <p className="help-note">AI 不输出 canvas；系统会按当前对话画布尺寸自动补到项目指令最前面。需要绘图时，talk 会先说明画面内容和作画步骤。</p>
       </div>
 
       <div className="help-section">
