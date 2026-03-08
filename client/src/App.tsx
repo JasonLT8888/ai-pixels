@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useProject, useProjectDispatch } from './store/ProjectContext';
 import PixelCanvas from './canvas/PixelCanvas';
+import type { PixelCanvasHandle } from './canvas/PixelCanvas';
 import InstructionPanel from './components/InstructionPanel';
 import PlayerControls from './components/PlayerControls';
 import JsonEditor from './components/JsonEditor';
@@ -16,6 +17,8 @@ export default function App() {
   const dispatch = useProjectDispatch();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const canvasRef = useRef<PixelCanvasHandle>(null);
 
   // Resizable panels — persist to localStorage
   const DEFAULT_INSTR_W = 260;
@@ -60,6 +63,23 @@ export default function App() {
     setInstrWidth(DEFAULT_INSTR_W);
     setChatWidth(DEFAULT_CHAT_W);
   }, []);
+
+  const handleExportPng = useCallback(async () => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const projectPart = state.projectId ? `project-${state.projectId}` : 'canvas';
+    const fileName = `${projectPart}-${timestamp}.png`;
+
+    try {
+      const exported = await canvasRef.current?.exportPng(fileName);
+      if (!exported) {
+        setExportError('当前画布暂时无法导出 PNG');
+        return;
+      }
+      setExportError(null);
+    } catch {
+      setExportError('导出 PNG 失败，请重试');
+    }
+  }, [state.projectId]);
 
   // Instruction panel resize
   const instrDragging = useRef(false);
@@ -191,31 +211,44 @@ export default function App() {
 
         {/* Center canvas */}
         <section className="canvas-area">
-          <PixelCanvas />
+          <PixelCanvas ref={canvasRef} />
 
           {/* 右上角：网格 + 缩放 */}
-          <div className="canvas-overlay-controls">
-            <label className="overlay-toggle">
-              <input
-                type="checkbox"
-                checked={state.showGrid}
-                onChange={() => dispatch({ type: 'TOGGLE_GRID' })}
-              />
-              网格
-            </label>
-            <label className="overlay-zoom">
-              缩放
-              <input
-                type="range"
-                min={1}
-                max={32}
-                value={state.zoom}
-                onChange={(e) =>
-                  dispatch({ type: 'SET_ZOOM', zoom: Number(e.target.value) })
-                }
-              />
-              <span>{state.zoom}x</span>
-            </label>
+          <div className="canvas-overlay-controls-stack">
+            <div className="canvas-overlay-controls">
+              <label className="overlay-toggle">
+                <input
+                  type="checkbox"
+                  checked={state.showGrid}
+                  onChange={() => dispatch({ type: 'TOGGLE_GRID' })}
+                />
+                网格
+              </label>
+              <label className="overlay-zoom">
+                缩放
+                <input
+                  type="range"
+                  min={1}
+                  max={32}
+                  value={state.zoom}
+                  onChange={(e) =>
+                    dispatch({ type: 'SET_ZOOM', zoom: Number(e.target.value) })
+                  }
+                />
+                <span>{state.zoom}x</span>
+              </label>
+            </div>
+
+            <div className="canvas-overlay-export">
+              <button
+                className="canvas-export-btn"
+                onClick={() => void handleExportPng()}
+                title="导出当前画面为 PNG"
+              >
+                导出 PNG
+              </button>
+              {exportError && <span className="canvas-export-error">{exportError}</span>}
+            </div>
           </div>
 
           {/* 左上角：comment（仅有内容时显示） */}

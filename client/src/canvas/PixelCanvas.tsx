@@ -1,8 +1,12 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { forwardRef, useRef, useEffect, useCallback, useState, useImperativeHandle } from 'react';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
 import { executeInstructions } from './renderer';
 
-export default function PixelCanvas() {
+export interface PixelCanvasHandle {
+  exportPng: (fileName: string) => Promise<boolean>;
+}
+
+const PixelCanvas = forwardRef<PixelCanvasHandle>(function PixelCanvas(_props, ref) {
   const state = useProject();
   const dispatch = useProjectDispatch();
   const { instructions, currentStep, zoom, showGrid, canvasWidth, canvasHeight } = state;
@@ -114,6 +118,45 @@ export default function PixelCanvas() {
     dragging.current = false;
   }, []);
 
+  const exportPng = useCallback(async (fileName: string) => {
+    const canvas = mainRef.current;
+    if (!canvas) return false;
+
+    const downloadBlob = (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    };
+
+    if (typeof canvas.toBlob === 'function') {
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, 'image/png');
+      });
+      if (blob) {
+        downloadBlob(blob);
+        return true;
+      }
+    }
+
+    const dataUrl = canvas.toDataURL('image/png');
+    if (!dataUrl) return false;
+
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return true;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ exportPng }), [exportPng]);
+
   return (
     <div
       ref={wrapperRef}
@@ -130,4 +173,6 @@ export default function PixelCanvas() {
       <canvas ref={gridRef} className="canvas-grid" style={{ width: pxW, height: pxH, display: (showGrid && zoom >= 4) ? 'block' : 'none' }} />
     </div>
   );
-}
+});
+
+export default PixelCanvas;
