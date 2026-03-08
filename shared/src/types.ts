@@ -32,6 +32,7 @@ export type LineInst = ['line', number, number, number, number, number];
 export type FloodInst = ['flood', number, number, number];
 export type PaletteInst = ['palette', string[]];
 export type CommentInst = ['comment', string];
+export type ErrorInst = ['error', string, unknown[]];
 
 export type Instruction =
   | CanvasInst
@@ -42,7 +43,8 @@ export type Instruction =
   | LineInst
   | FloodInst
   | PaletteInst
-  | CommentInst;
+  | CommentInst
+  | ErrorInst;
 
 export type ActionInstruction = Exclude<Instruction, CanvasInst>;
 

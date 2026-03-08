@@ -6,6 +6,7 @@ import {
 } from '../store/ProjectContext';
 
 function formatInstruction(inst: unknown[]): string {
+  if (inst[0] === 'error') return JSON.stringify(inst[2]);
   return JSON.stringify(inst);
 }
 
@@ -51,17 +52,20 @@ export default function InstructionPanel() {
         </div>
       )}
       {visibleInstructions.map((inst, i) => {
+        const isError = inst[0] === 'error';
         const isActive = i < currentVisibleStep;
         const isCurrent = i === currentVisibleStep - 1;
         return (
           <div
             key={i}
-            className={`instruction-item${isCurrent ? ' active' : ''}`}
-            style={{ opacity: isActive ? 1 : 0.4 }}
+            className={`instruction-item${isCurrent ? ' active' : ''}${isError ? ' error' : ''}`}
+            style={{ opacity: isError || isActive ? 1 : 0.4 }}
             onClick={() => dispatch({ type: 'GO_TO_STEP', step: hiddenStepCount + i + 1 })}
+            title={isError ? String(inst[1]) : undefined}
           >
-            <span className="inst-index">{i + 1}</span>
+            <span className="inst-index">{isError ? '!' : i + 1}</span>
             <span className="inst-params">{formatInstruction(inst)}</span>
+            {isError && <span className="inst-error-msg">{String(inst[1])}</span>}
           </div>
         );
       })}

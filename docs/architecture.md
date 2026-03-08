@@ -1,221 +1,239 @@
-# ai-pixels 架构设计
+# AI Pixels 架构设计
 
-## 技术栈
+本文档基于当前代码实现更新，优先反映真实结构，而不是早期设想。
 
-| 层 | 技术 | 说明 |
-|----|------|------|
-| 前端 | React + TypeScript + Vite | Canvas 渲染 + UI |
-| 后端 | Node.js + Express + TypeScript | API 服务 |
-| 存储 | SQLite (better-sqlite3) | 项目/指令持久化 |
-| 通信 | REST + SSE | SSE 用于 LLM 流式输出 |
+## 1. 整体架构
 
-## 目录结构
-
-```
-ai-pixels/
-├── client/                # 前端
-│   ├── src/
-│   │   ├── components/    # React 组件
-│   │   ├── canvas/        # 画布渲染引擎
-│   │   ├── types/         # 共享类型
-│   │   └── api/           # 后端 API 调用封装
-│   └── vite.config.ts
-├── server/                # 后端
-│   ├── src/
-│   │   ├── routes/        # Express 路由
-│   │   ├── services/      # 业务逻辑
-│   │   ├── db/            # SQLite 操作
-│   │   └── llm/           # LLM 代理层
-│   └── tsconfig.json
-├── shared/                # 前后端共享
-│   └── types.ts           # 指令类型定义、API 接口类型
-└── docs/
-    └── instruction-spec.md
-```
-
-## 后端 API 设计
-
-### LLM 代理
-
-```
-POST   /api/llm/chat          # 发送对话，SSE 流式返回
-POST   /api/llm/chat-vision   # 带图片的对话（参考图/截图）
-GET    /api/llm/models         # 获取可用模型列表
-```
-
-LLM 代理的职责：
-- 隐藏 API token（token 存后端，前端不接触）
-- 拼接 system prompt + 用户消息 + 图片
-- 流式转发 LLM 响应（SSE）
-- 解析 LLM 返回中的指令 JSON
-
-### LLM 配置
-
-```
-GET    /api/config/llm         # 获取当前 LLM 配置（不返回完整 token）
-PUT    /api/config/llm         # 更新 LLM 配置
-GET    /api/config/prompt       # 获取 system prompt
-PUT    /api/config/prompt       # 更新 system prompt
-```
-
-### 项目管理
-
-```
-GET    /api/projects                    # 项目列表
-POST   /api/projects                    # 新建项目
-GET    /api/projects/:id                # 获取项目详情（含指令）
-PUT    /api/projects/:id                # 更新项目信息
-DELETE /api/projects/:id                # 删除项目
-PUT    /api/projects/:id/instructions   # 保存指令列表
-GET    /api/projects/:id/export/png     # 导出 PNG（可选，服务端渲染）
-GET    /api/projects/:id/export/json    # 导出指令 JSON
-```
-
-### 对话历史
-
-```
-GET    /api/projects/:id/conversations  # 获取项目的对话历史
-POST   /api/projects/:id/conversations  # 追加对话记录
-```
-
-## 数据库设计 (SQLite)
-
-```sql
--- LLM 配置（单行表）
-CREATE TABLE llm_config (
-  id         INTEGER PRIMARY KEY DEFAULT 1,
-  api_url    TEXT NOT NULL DEFAULT '',
-  api_token  TEXT NOT NULL DEFAULT '',
-  model      TEXT NOT NULL DEFAULT '',
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- System Prompt
-CREATE TABLE system_prompt (
-  id         INTEGER PRIMARY KEY DEFAULT 1,
-  content    TEXT NOT NULL DEFAULT '',
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- 项目
-CREATE TABLE projects (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  name         TEXT NOT NULL,
-  canvas_w     INTEGER NOT NULL DEFAULT 32,
-  canvas_h     INTEGER NOT NULL DEFAULT 32,
-  instructions TEXT NOT NULL DEFAULT '[]',  -- JSON 指令数组
-  thumbnail    TEXT,                         -- base64 缩略图
-  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- 对话历史
-CREATE TABLE conversations (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  role       TEXT NOT NULL,        -- 'user' | 'assistant'
-  content    TEXT NOT NULL,        -- 文字内容
-  images     TEXT,                 -- JSON 数组，base64 图片
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-## 前后端交互流程
-
-### 用户发送文字描述生成像素画
-
-```
-用户输入 "画一个红色爱心"
+```text
+Browser
+  ├─ Canvas Panel
+  ├─ Instruction Panel
+  └─ Chat Panel
         │
-        ▼
-前端 POST /api/llm/chat
-  body: { projectId, message, history }
+        ├─ REST: 项目、聊天、配置
+        └─ SSE: LLM 流式输出
+
+Express Server
+  ├─ Projects API
+  ├─ Chats API
+  ├─ Config API
+  └─ LLM Proxy
         │
-        ▼
-后端拼接: system_prompt + history + user_message
-        │
-        ▼
-后端调用 LLM API（流式）
-        │
-        ▼
-SSE 逐 token 推送到前端
-        │
-        ▼
-前端累积响应，解析出指令 JSON
-        │
-        ▼
-前端执行指令渲染画布
-        │
-        ▼
-后端保存对话记录 + 更新项目指令
+        ├─ SQLite
+        └─ OpenAI-compatible upstream API
 ```
 
-### 用户上传参考图
+## 2. 前端结构
 
-```
-用户拖入参考图 + 输入 "照这个画"
-        │
-        ▼
-前端将图片转 base64
-        │
-        ▼
-POST /api/llm/chat-vision
-  body: { projectId, message, images: [base64...], history }
-        │
-        ▼
-后端构造 vision 消息格式发给 LLM
-        │
-        ▼
-（后续同上）
-```
+前端是一个单页应用，核心由两个 Context 驱动：
 
-### AI 审视画面
+- `ProjectContext`: 当前项目、指令、画布尺寸、回放状态
+- `ChatContext`: 当前 chat、消息、流式状态、模型配置、压缩状态
 
-```
-用户点击 "AI审视画面"
-        │
-        ▼
-前端 canvas.toDataURL() 获取截图
-        │
-        ▼
-POST /api/llm/chat-vision
-  body: { projectId, message: "分析当前画面...",
-          images: [canvasBase64], imageTypes: ["canvas"],
-          history }
-        │
-        ▼
-后端用不同 prompt 模板拼接
-        │
-        ▼
-（后续同上）
+主要职责拆分：
+
+- `PixelCanvas.tsx`: 负责画布显示、平移、缩放、网格
+- `renderer.ts`: 负责执行指令并生成像素数据
+- `ChatPanel.tsx`: 负责消息流、图片输入、预览、自检、压缩与 chat 管理
+- `InstructionPanel.tsx`: 展示前置指令与可回放步骤
+- `PlayerControls.tsx`: 控制逐步播放
+- `JsonEditor.tsx`: 手动修改项目指令
+- `SettingsModal.tsx`: 管理 LLM 配置档案与追加提示词
+
+## 3. 后端结构
+
+后端使用 Express，按路由模块组织：
+
+- `projects.ts`: 项目列表、创建、详情、指令保存
+- `chats.ts`: 项目下 chat 列表、chat 删除、消息清空、消息压缩
+- `config.ts`: LLM 配置档案、激活配置、提示词、模型拉取
+- `llm.ts`: 与上游 LLM 通信并将结果以 SSE 形式转发
+- `conversations.ts`: 老的 project 级消息接口，仍保留但不建议扩展
+
+## 4. 实际数据模型
+
+### 4.1 关系
+
+```text
+projects
+  └─ chats
+       └─ conversations
 ```
 
-## 开发分期（更新）
+### 4.2 表结构摘要
 
-### Phase 1 - 基础骨架
-- 前后端项目搭建、开发环境配置
-- SQLite 初始化、数据库迁移
-- 画布渲染引擎 + 指令执行器
-- 指令播放器（step 控制）
+#### `projects`
 
-### Phase 2 - 后端 API + LLM 接入
-- LLM 配置管理 API
-- LLM 代理（流式转发）
-- 对话 UI + 指令解析
-- System prompt 管理
+- `id`
+- `name`
+- `canvas_w`
+- `canvas_h`
+- `instructions`
+- `thumbnail`
+- `created_at`
+- `updated_at`
 
-### Phase 3 - 项目管理
-- 项目 CRUD
-- 指令持久化
-- 对话历史
-- 导入/导出
+#### `chats`
 
-### Phase 4 - 可视化编辑
-- 绘图工具栏
-- 画布交互（点击/拖拽生成指令）
-- 指令列表编辑（增删改排序）
+- `id`
+- `project_id`
+- `title`
+- `session_id`
+- `canvas_w`
+- `canvas_h`
+- `created_at`
+- `compressed_summary`
+- `compress_before_id`
 
-### Phase 5 - 视觉闭环
-- 参考图上传
-- 画布截图反馈
-- 多轮修正迭代
+#### `conversations`
+
+- `id`
+- `project_id`
+- `chat_id`
+- `role`
+- `content`
+- `images`
+- `model`
+- `created_at`
+
+#### `llm_config`
+
+- `id`
+- `name`
+- `api_url`
+- `api_token`
+- `model`
+- `context_window`
+- `compress_threshold`
+- `is_active`
+- `updated_at`
+
+#### `system_prompt`
+
+- `id`
+- `content`
+- `updated_at`
+
+## 5. 迁移策略
+
+数据库迁移采用轻量的 `ALTER TABLE + try/catch` 模式，目标是：
+
+- 启动即迁移
+- 重复执行不报错
+- 不依赖外部 migration 框架
+
+当前已存在的迁移方向包括：
+
+- 给 `conversations` 增加 `model`
+- 给 `conversations` 增加 `chat_id`
+- 给 `chats` 增加画布尺寸、压缩字段、`session_id`
+- 给 `llm_config` 增加 `context_window`、`compress_threshold`、`name`、`is_active`
+- 将历史孤立消息迁移到默认 chat
+
+## 6. 核心请求流
+
+### 6.1 普通聊天 / 生成像素画
+
+```text
+用户输入文字或附图
+  -> 前端 POST /api/llm/chat
+  -> 后端读取 chat 对应的 project 与画布尺寸
+  -> 载入默认系统提示词 + 用户追加提示词
+  -> 拼接历史消息 / 压缩摘要 / 当前消息
+  -> 请求上游 /chat/completions
+  -> 将上游流按 SSE 转发到前端
+  -> 保存 assistant 完整回复
+```
+
+### 6.2 自行检查
+
+```text
+前端将当前指令渲染成 PNG data URL
+  -> 作为 images 发送到 /api/llm/chat
+  -> AI 根据最近上下文和画面截图进行复核
+  -> 前端解析返回的 talk/actions
+```
+
+### 6.3 对话压缩
+
+```text
+用户触发压缩
+  -> POST /api/chats/:chatId/compress
+  -> 服务端保留最近 2 轮 user/assistant 对
+  -> 更早内容整理成纯文本摘要
+  -> 保存到 chats.compressed_summary
+  -> 后续聊天时只注入摘要 + 压缩点之后的消息
+```
+
+### 6.4 中断重试
+
+```text
+SSE 中断且没有收到完整回复
+  -> 前端提示重试
+  -> 重新发送 retry_last_user = true
+  -> 服务端检测最后一条 user 消息是否相同
+  -> 命中则复用，不重复插入数据库
+```
+
+## 7. 实际 API 路由
+
+### 项目
+
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:id`
+- `PUT /api/projects/:id/instructions`
+
+### chat
+
+- `GET /api/projects/:id/chats`
+- `POST /api/projects/:id/chats`
+- `DELETE /api/projects/:id/chats`
+- `DELETE /api/chats/:chatId`
+- `DELETE /api/chats/:chatId/messages`
+- `GET /api/chats/:chatId/messages`
+- `POST /api/chats/:chatId/compress`
+
+### 配置
+
+- `GET /api/config/llm`
+- `POST /api/config/llm`
+- `PUT /api/config/llm/active`
+- `PUT /api/config/llm/:id`
+- `DELETE /api/config/llm/:id`
+- `GET /api/config/prompt`
+- `PUT /api/config/prompt`
+- `POST /api/config/models`
+
+### LLM
+
+- `POST /api/llm/chat`
+
+### 兼容遗留接口
+
+- `GET /api/projects/:id/conversations`
+- `POST /api/projects/:id/conversations`
+
+## 8. 指令系统与约束
+
+项目内部保存完整指令：
+
+```text
+canvas -> palette -> drawing/comment
+```
+
+AI 返回的是动作级 `actions`，不允许包含 `canvas`。服务端还会在系统提示词末尾动态注入当前 chat 的画布尺寸约束。
+
+指令执行由前端完成，后端不负责渲染。
+
+## 9. 已知缺口
+
+以下设计曾在旧文档或阶段规划中出现，但当前代码未实现：
+
+- 项目 PNG 导出
+- 项目 JSON 导出
+- 左侧绘图工具栏
+- 画布点击/拖拽生成指令
+- 指令列表增删改排序界面
+
+这些内容已转入 [feature-status.md](feature-status.md) 统一管理，避免在架构文档中误写为已完成。

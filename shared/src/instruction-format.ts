@@ -3,6 +3,7 @@ import type {
   CanvasInst,
   CommentInst,
   EllipseInst,
+  ErrorInst,
   FloodInst,
   Instruction,
   LineInst,
@@ -208,28 +209,35 @@ function parseInstruction(raw: unknown[]): Instruction {
       return parseFloodInstruction(inst);
     case 'comment':
       return parseCommentInstruction(inst);
+    case 'error':
+      return inst as ErrorInst;
     default:
       throw new Error(`不支持的指令类型: ${String(head)}`);
   }
 }
 
 function assertSequence(instructions: Instruction[], mode: NormalizationMode) {
+  // Filter out error instructions for sequence validation
+  const clean = instructions.filter((inst) => inst[0] !== 'error');
+  const hasErrors = clean.length < instructions.length;
+
   if (mode === 'project') {
-    if (instructions.length === 0) {
+    if (clean.length === 0) {
       throw new Error('项目指令不能为空，第一条必须是 canvas');
     }
-    if (instructions[0][0] !== 'canvas') {
+    if (clean[0][0] !== 'canvas') {
       throw new Error('项目指令第 1 条必须是 canvas');
     }
-  } else if (instructions.some((instruction) => instruction[0] === 'canvas')) {
+  } else if (clean.some((instruction) => instruction[0] === 'canvas')) {
     throw new Error('AI actions 不允许包含 canvas 指令');
   }
 
-  const body = mode === 'project' ? instructions.slice(1) : instructions;
+  const body = mode === 'project' ? clean.slice(1) : clean;
   const hasDrawing = body.some((instruction) => DRAWING_TYPES.has(instruction[0]));
   const paletteIndex = body.findIndex((instruction) => instruction[0] === 'palette');
 
-  if ((hasDrawing || paletteIndex >= 0) && paletteIndex !== 0) {
+  // When errors exist, relax palette-first requirement (the palette itself may be the errored instruction)
+  if (!hasErrors && (hasDrawing || paletteIndex >= 0) && paletteIndex !== 0) {
     const position = mode === 'project' ? 2 : 1;
     throw new Error(`存在绘图内容时，第 ${position} 条必须是 palette`);
   }
@@ -246,12 +254,12 @@ function assertSequence(instructions: Instruction[], mode: NormalizationMode) {
       case 'canvas':
         throw new Error('canvas 只能出现在第一条');
       case 'comment':
-        if (hasDrawing && !seenPalette) {
+        if (!hasErrors && hasDrawing && !seenPalette) {
           throw new Error('存在绘图内容时，comment 不能出现在 palette 之前');
         }
         break;
       default:
-        if (DRAWING_TYPES.has(instruction[0]) && !seenPalette) {
+        if (!hasErrors && DRAWING_TYPES.has(instruction[0]) && !seenPalette) {
           throw new Error('绘图指令之前必须先定义 palette');
         }
         break;
@@ -276,11 +284,16 @@ export function normalizeActionInstructions(rawInstructions: unknown[]): ActionI
   if (!Array.isArray(rawInstructions)) {
     throw new Error('actions 必须是数组');
   }
-  const instructions = rawInstructions.map((raw, index) => {
+  const instructions = rawInstructions.map((raw, index): Instruction => {
     if (!Array.isArray(raw)) {
-      throw new Error(`第 ${index + 1} 条 actions 不是数组`);
+      return ['error', `第 ${index + 1} 条 actions 不是数组`, [raw]] as ErrorInst;
     }
-    return parseInstruction(raw);
+    try {
+      return parseInstruction(raw);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return ['error', msg, raw] as ErrorInst;
+    }
   });
   assertSequence(instructions, 'actions');
   return instructions as ActionInstruction[];

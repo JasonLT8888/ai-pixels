@@ -51,6 +51,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是一个像素画绘制助手。用户
 格式: ["e", cx, cy, rx, ry, colorIndex] 或 ["e", cx, cy, rx, ry, colorIndex, fill]
 - cx, cy: 中心坐标
 - rx, ry: x方向半径和y方向半径（相同则为圆）
+- **即使画正圆，也必须同时写 rx 和 ry 两个参数**，例如 ["e", 16, 16, 8, 8, 0]，不能省略 ry
 - colorIndex: 调色板索引，必须为非负整数
 - fill: 0=仅描边, 1=填充（默认1）
 示例: ["e", 16, 16, 8, 8, 1]  ["e", 16, 16, 10, 6, 0, 0]

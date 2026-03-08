@@ -399,6 +399,34 @@ body {
   background: transparent;
 }
 
+.instruction-item.error {
+  border-left-color: #f55;
+  background: rgba(255, 50, 50, 0.1);
+  opacity: 1 !important;
+  flex-wrap: wrap;
+}
+
+.instruction-item.error .inst-index {
+  color: #f55;
+  font-weight: 700;
+}
+
+.instruction-item.error .inst-params {
+  color: #f55;
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.inst-error-msg {
+  width: 100%;
+  font-size: 11px;
+  color: #f55;
+  padding-left: 30px;
+  margin-top: 2px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .instruction-item .inst-index {
   color: var(--text-dim);
   min-width: 24px;
