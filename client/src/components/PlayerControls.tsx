@@ -6,7 +6,13 @@ import {
   useProjectDispatch,
 } from '../store/ProjectContext';
 
-export default function PlayerControls() {
+export default function PlayerControls({
+  onExportJson,
+  onExportPng,
+}: {
+  onExportJson: () => void;
+  onExportPng: () => void;
+}) {
   const { currentStep, instructions, playing, playSpeed } = useProject();
   const dispatch = useProjectDispatch();
   const timerRef = useRef<number | null>(null);
@@ -57,7 +63,7 @@ export default function PlayerControls() {
         </button>
       </div>
       <div className="player-info">
-        <span>步骤 {currentVisibleStep} / {total}</span>
+        <span className="player-step-text">步骤 {currentVisibleStep} / {total}</span>
         <div className="player-speed">
           <span>速度</span>
           <input
@@ -70,6 +76,20 @@ export default function PlayerControls() {
           />
           <span>{playSpeed}ms</span>
         </div>
+        <button
+          type="button"
+          className="json-secondary-btn player-export-btn"
+          onClick={onExportJson}
+        >
+          导出 JSON
+        </button>
+        <button
+          type="button"
+          className="json-secondary-btn"
+          onClick={onExportPng}
+        >
+          导出 PNG
+        </button>
       </div>
     </div>
   );

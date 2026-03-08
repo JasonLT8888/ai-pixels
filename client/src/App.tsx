@@ -5,6 +5,7 @@ import type { PixelCanvasHandle } from './canvas/PixelCanvas';
 import InstructionPanel from './components/InstructionPanel';
 import PlayerControls from './components/PlayerControls';
 import JsonEditor from './components/JsonEditor';
+import type { JsonEditorHandle } from './components/JsonEditor';
 import ChatPanel from './components/ChatPanel';
 import HelpPanel from './components/HelpPanel';
 import SettingsModal from './components/SettingsModal';
@@ -17,8 +18,11 @@ export default function App() {
   const dispatch = useProjectDispatch();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const canvasRef = useRef<PixelCanvasHandle>(null);
+  const jsonEditorRef = useRef<JsonEditorHandle>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Resizable panels — persist to localStorage
   const DEFAULT_INSTR_W = 260;
@@ -80,6 +84,28 @@ export default function App() {
       setExportError('导出 PNG 失败，请重试');
     }
   }, [state.projectId]);
+
+  const handleExportJson = useCallback(() => {
+    jsonEditorRef.current?.exportJson();
+  }, []);
+
+  const handleImportJson = useCallback(() => {
+    jsonEditorRef.current?.openImportFilePicker();
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      setMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [menuOpen]);
 
   // Instruction panel resize
   const instrDragging = useRef(false);
@@ -177,6 +203,49 @@ export default function App() {
       {/* Top toolbar */}
       <header className="toolbar">
         <span className="toolbar-title">ai-pixels</span>
+        <div className="toolbar-menu" ref={menuRef}>
+          <button
+            className="toolbar-menu-btn"
+            onClick={() => setMenuOpen((open) => !open)}
+            title="文件菜单"
+          >
+            文件
+          </button>
+          {menuOpen && (
+            <div className="toolbar-menu-panel">
+              <button
+                type="button"
+                className="toolbar-menu-item"
+                onClick={() => {
+                  handleImportJson();
+                  setMenuOpen(false);
+                }}
+              >
+                导入 JSON
+              </button>
+              <button
+                type="button"
+                className="toolbar-menu-item"
+                onClick={() => {
+                  handleExportJson();
+                  setMenuOpen(false);
+                }}
+              >
+                导出 JSON
+              </button>
+              <button
+                type="button"
+                className="toolbar-menu-item"
+                onClick={() => {
+                  void handleExportPng();
+                  setMenuOpen(false);
+                }}
+              >
+                导出 PNG
+              </button>
+            </div>
+          )}
+        </div>
         <button
           className="toolbar-help-btn"
           onClick={() => setHelpOpen(true)}
@@ -238,17 +307,6 @@ export default function App() {
                 <span>{state.zoom}x</span>
               </label>
             </div>
-
-            <div className="canvas-overlay-export">
-              <button
-                className="canvas-export-btn"
-                onClick={() => void handleExportPng()}
-                title="导出当前画面为 PNG"
-              >
-                导出 PNG
-              </button>
-              {exportError && <span className="canvas-export-error">{exportError}</span>}
-            </div>
           </div>
 
           {/* 左上角：comment（仅有内容时显示） */}
@@ -290,9 +348,13 @@ export default function App() {
 
         {/* Instruction panel */}
         <aside className="panel-instructions" style={{ width: instrWidth }}>
-          <PlayerControls />
+          <PlayerControls
+            onExportJson={handleExportJson}
+            onExportPng={() => void handleExportPng()}
+          />
+          {exportError && <div className="player-export-error">{exportError}</div>}
           <InstructionPanel />
-          <JsonEditor />
+          <JsonEditor ref={jsonEditorRef} />
         </aside>
 
         {/* Resize handle — chat panel */}

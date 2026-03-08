@@ -58,6 +58,62 @@ body {
   margin-left: auto;
 }
 
+.toolbar-menu {
+  position: relative;
+}
+
+.toolbar-menu-btn,
+.toolbar-help-btn,
+.toolbar-reset-btn,
+.toolbar-settings-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar-menu-btn:hover,
+.toolbar-help-btn:hover,
+.toolbar-reset-btn:hover,
+.toolbar-settings-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toolbar-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 148px;
+  padding: 6px;
+  background: rgba(40, 40, 64, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 40;
+}
+
+.toolbar-menu-item {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar-menu-item:hover {
+  background: rgba(124, 111, 247, 0.18);
+}
+
 /* ── Canvas overlay controls ── */
 .canvas-overlay-controls {
   display: flex;
@@ -105,39 +161,6 @@ body {
   min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.canvas-overlay-export {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.canvas-export-btn {
-  min-width: 112px;
-  background: rgba(124, 111, 247, 0.18);
-  border: 1px solid rgba(124, 111, 247, 0.55);
-  color: var(--text);
-  padding: 7px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.canvas-export-btn:hover {
-  background: rgba(124, 111, 247, 0.3);
-  border-color: var(--accent-hover);
-}
-
-.canvas-export-error {
-  max-width: 220px;
-  font-size: 11px;
-  line-height: 1.3;
-  color: #ffb0b0;
-  text-align: right;
 }
 
 .canvas-overlay-comment {
@@ -338,13 +361,14 @@ body {
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .player-buttons {
   display: flex;
   gap: 4px;
   align-items: center;
+  justify-content: center;
 }
 
 .player-buttons button {
@@ -374,18 +398,29 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.player-step-text {
+  font-variant-numeric: tabular-nums;
 }
 
 .player-speed {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
 }
 
 .player-speed input[type='range'] {
   width: 60px;
   accent-color: var(--accent);
+}
+
+.player-export-error {
+  padding: 0 12px 8px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #ffb0b0;
 }
 
 /* ── Instruction panel ── */
@@ -505,6 +540,12 @@ body {
   color: var(--text-dim);
 }
 
+.json-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .json-editor-header button {
   background: var(--accent);
   border: none;
@@ -519,6 +560,22 @@ body {
   background: var(--accent-hover);
 }
 
+.json-secondary-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.json-secondary-btn:hover {
+  background: var(--surface2);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.player-export-btn {
+  margin-left: auto;
+}
+
 .json-editor textarea {
   flex: 1;
   background: var(--bg);
@@ -529,6 +586,18 @@ body {
   font-size: 12px;
   resize: none;
   outline: none;
+  border-top: 1px dashed transparent;
+  border-bottom: 1px dashed transparent;
+}
+
+.json-editor textarea.drag-active {
+  background: rgba(124, 111, 247, 0.08);
+  border-top-color: rgba(124, 111, 247, 0.55);
+  border-bottom-color: rgba(124, 111, 247, 0.55);
+}
+
+.json-file-input {
+  display: none;
 }
 
 .json-editor .json-error {
