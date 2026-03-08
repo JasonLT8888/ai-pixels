@@ -355,6 +355,21 @@ body {
   min-height: 0;
 }
 
+.instruction-section-label {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.instruction-divider {
+  height: 1px;
+  margin: 6px 12px;
+  background: var(--border);
+  opacity: 0.7;
+}
+
 .instruction-item {
   padding: 3px 12px;
   font-size: 12px;
@@ -373,6 +388,15 @@ body {
 .instruction-item.active {
   background: rgba(124, 111, 247, 0.15);
   border-left-color: var(--accent);
+}
+
+.instruction-item.setup {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.instruction-item.setup:hover {
+  background: transparent;
 }
 
 .instruction-item .inst-index {

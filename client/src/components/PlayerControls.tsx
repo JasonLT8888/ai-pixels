@@ -1,10 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { useProject, useProjectDispatch } from '../store/ProjectContext';
+import {
+  getCurrentVisibleStep,
+  getVisibleStepCount,
+  useProject,
+  useProjectDispatch,
+} from '../store/ProjectContext';
 
 export default function PlayerControls() {
   const { currentStep, instructions, playing, playSpeed } = useProject();
   const dispatch = useProjectDispatch();
   const timerRef = useRef<number | null>(null);
+  const total = getVisibleStepCount(instructions);
+  const currentVisibleStep = getCurrentVisibleStep(currentStep, instructions);
 
   // Auto-play timer
   useEffect(() => {
@@ -27,8 +34,6 @@ export default function PlayerControls() {
     }
   }, [currentStep, instructions.length, playing, dispatch]);
 
-  const total = instructions.length;
-
   return (
     <div className="player">
       <div className="player-buttons">
@@ -42,7 +47,7 @@ export default function PlayerControls() {
             if (playing) {
               dispatch({ type: 'SET_PLAYING', playing: false });
             } else {
-              if (currentStep >= total) dispatch({ type: 'FIRST_STEP' });
+              if (currentVisibleStep >= total) dispatch({ type: 'FIRST_STEP' });
               dispatch({ type: 'SET_PLAYING', playing: true });
             }
           }}
@@ -52,7 +57,7 @@ export default function PlayerControls() {
         </button>
       </div>
       <div className="player-info">
-        <span>步骤 {currentStep} / {total}</span>
+        <span>步骤 {currentVisibleStep} / {total}</span>
         <div className="player-speed">
           <span>速度</span>
           <input

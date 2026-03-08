@@ -157,8 +157,16 @@ function getAssistantFormatError(content: string): string | null {
   try {
     const val = JSON.parse(candidate);
     if (val && typeof val === 'object' && !Array.isArray(val)) {
-      if (!Array.isArray((val as { actions?: unknown }).actions)) {
+      const payload = val as { talk?: unknown; actions?: unknown };
+      const hasTalk = typeof payload.talk === 'string' && payload.talk.trim().length > 0;
+      if (!("actions" in payload)) {
+        return hasTalk ? null : '缺少 actions 数组';
+      }
+      if (!Array.isArray(payload.actions)) {
         return '缺少 actions 数组';
+      }
+      if (payload.actions.length === 0) {
+        return null;
       }
       return 'actions 中未解析到有效指令';
     }
@@ -872,7 +880,7 @@ export default function ChatPanel() {
       ...(lastUserRequirement
         ? ['原始用户需求如下（请严格遵循）：', lastUserRequirement]
         : []),
-      '请重新生成并严格只返回 JSON 对象，格式必须是 {"talk":"...","actions":[...]}。',
+      '请重新生成并严格只返回 JSON 对象。需要绘图时使用 {"talk":"...","actions":[...]}；纯对话时可使用 {"talk":"...","actions":[]} 或 {"talk":"..."}。',
       '不要输出 Markdown 代码块，不要输出额外解释。',
       '你上一条原始回复如下：',
       assistantMsg.content,

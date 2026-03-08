@@ -73,6 +73,30 @@ function getCanvasSizeFromInstructions(
   return { width, height };
 }
 
+export function getHiddenStepCount(instructions: Instruction[]) {
+  let hiddenCount = 0;
+  if (instructions[0]?.[0] === 'canvas') {
+    hiddenCount += 1;
+  }
+  if (instructions[hiddenCount]?.[0] === 'palette') {
+    hiddenCount += 1;
+  }
+  return hiddenCount;
+}
+
+export function getVisibleStepCount(instructions: Instruction[]) {
+  return Math.max(0, instructions.length - getHiddenStepCount(instructions));
+}
+
+export function getCurrentVisibleStep(currentStep: number, instructions: Instruction[]) {
+  return Math.max(0, Math.min(getVisibleStepCount(instructions), currentStep - getHiddenStepCount(instructions)));
+}
+
+function getFirstVisibleCurrentStep(instructions: Instruction[]) {
+  const hiddenCount = getHiddenStepCount(instructions);
+  return getVisibleStepCount(instructions) > 0 ? hiddenCount + 1 : hiddenCount;
+}
+
 function reducer(state: ProjectState, action: ProjectAction): ProjectState {
   switch (action.type) {
     case 'SET_PROJECT': {
@@ -87,7 +111,7 @@ function reducer(state: ProjectState, action: ProjectAction): ProjectState {
         instructions: action.instructions,
         canvasWidth: width,
         canvasHeight: height,
-        currentStep: action.instructions.length,
+        currentStep: getFirstVisibleCurrentStep(action.instructions),
       };
     }
     case 'SET_INSTRUCTIONS': {
@@ -101,18 +125,28 @@ function reducer(state: ProjectState, action: ProjectAction): ProjectState {
         instructions: action.instructions,
         canvasWidth: width,
         canvasHeight: height,
-        currentStep: action.instructions.length,
+        currentStep: getFirstVisibleCurrentStep(action.instructions),
         playing: false,
       };
     }
     case 'GO_TO_STEP':
       return { ...state, currentStep: Math.max(0, Math.min(action.step, state.instructions.length)) };
-    case 'NEXT_STEP':
-      return { ...state, currentStep: Math.min(state.currentStep + 1, state.instructions.length) };
-    case 'PREV_STEP':
-      return { ...state, currentStep: Math.max(state.currentStep - 1, 0) };
+    case 'NEXT_STEP': {
+      const firstVisibleCurrentStep = getFirstVisibleCurrentStep(state.instructions);
+      return {
+        ...state,
+        currentStep: Math.min(Math.max(state.currentStep, firstVisibleCurrentStep) + 1, state.instructions.length),
+      };
+    }
+    case 'PREV_STEP': {
+      const firstVisibleCurrentStep = getFirstVisibleCurrentStep(state.instructions);
+      return {
+        ...state,
+        currentStep: Math.max(Math.min(state.currentStep - 1, state.instructions.length), firstVisibleCurrentStep),
+      };
+    }
     case 'FIRST_STEP':
-      return { ...state, currentStep: 0, playing: false };
+      return { ...state, currentStep: getFirstVisibleCurrentStep(state.instructions), playing: false };
     case 'LAST_STEP':
       return { ...state, currentStep: state.instructions.length, playing: false };
     case 'SET_ZOOM':

@@ -10,6 +10,7 @@ export interface ParseResult {
  * Extract talk text and instruction arrays from LLM response text.
  * Supports:
  *  - JSON object: {"talk":"...", "actions":[[...]]}
+ *  - JSON object: {"talk":"..."}  (discussion only, no drawing)
  *  - Pure JSON array: [[...], [...]]  (legacy, talk = "")
  *  - Markdown code block with JSON inside
  *  - Mixed text with embedded JSON
@@ -57,16 +58,23 @@ function tryParseStructured(str: string): ParseResult | null {
   try {
     const val = JSON.parse(str);
 
-    // {talk, actions} object
-    if (val && typeof val === 'object' && !Array.isArray(val) && Array.isArray(val.actions)) {
+    // {talk, actions} object or talk-only discussion object
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
       const talk = typeof val.talk === 'string' ? val.talk : '';
-      let instructions: Instruction[] = [];
-      try {
-        instructions = normalizeActionInstructions(val.actions);
-      } catch {
-        instructions = [];
+
+      if (!('actions' in val) && talk) {
+        return { talk, instructions: [] };
       }
-      return { talk, instructions };
+
+      if (Array.isArray(val.actions)) {
+        let instructions: Instruction[] = [];
+        try {
+          instructions = normalizeActionInstructions(val.actions);
+        } catch {
+          instructions = [];
+        }
+        return { talk, instructions };
+      }
     }
 
     // Plain array (legacy)
