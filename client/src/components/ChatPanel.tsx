@@ -249,6 +249,27 @@ function getUserMessageDisplayContent(message: ChatMessage): string {
   return `[自行检查] 结合上一条 AI 回复和最近上下文复核当前画面${imageLabel}`;
 }
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 /** Prepend canvas instruction to an instruction list */
 function withCanvas(instructions: Instruction[], w: number, h: number): Instruction[] {
   return buildProjectInstructionsFromActions(instructions, { width: w, height: h });
@@ -724,8 +745,17 @@ function HistoryTab({
             <div className="chat-history-item-info">
               <span className="chat-history-item-title">{c.title}</span>
               <span className="chat-history-item-meta">
-                {c.message_count} 条 · {new Date(c.created_at).toLocaleDateString()}
+                {c.session_id ? `#${c.session_id} · ` : ''}{c.message_count} 条 · {new Date(c.created_at).toLocaleDateString()}
               </span>
+              {c.used_models && c.used_models.length > 0 && (
+                <div className="chat-history-item-models">
+                  {c.used_models.map((model) => (
+                    <span key={model} className="chat-history-model-chip" title={model}>
+                      {model}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               className="chat-history-item-delete"
@@ -756,6 +786,7 @@ export default function ChatPanel() {
   const [showSizePicker, setShowSizePicker] = useState(false);
   const [newChatW, setNewChatW] = useState(32);
   const [newChatH, setNewChatH] = useState(32);
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [includeLastUserRequirement, setIncludeLastUserRequirement] = useState(true);
   const [lastFailedRequest, setLastFailedRequest] = useState<RetryRequest | null>(null);
   const lastCompressMsgCount = useRef<number>(0);
@@ -868,7 +899,17 @@ export default function ChatPanel() {
   const handleConfirmNewChat = useCallback(async () => {
     if (!project.projectId) return;
     const newChat = await createChat(project.projectId, undefined, newChatW, newChatH);
-    chatDispatch({ type: 'ADD_CHAT', chat: { ...newChat, canvas_w: newChatW, canvas_h: newChatH, created_at: new Date().toISOString(), message_count: 0 } });
+    chatDispatch({
+      type: 'ADD_CHAT',
+      chat: {
+        ...newChat,
+        canvas_w: newChatW,
+        canvas_h: newChatH,
+        created_at: new Date().toISOString(),
+        message_count: 0,
+        used_models: [],
+      },
+    });
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: newChat.id });
     chatDispatch({ type: 'SET_MESSAGES', messages: [] });
     chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
@@ -940,6 +981,18 @@ export default function ChatPanel() {
   const handleSendPreviewImageToInput = useCallback((image: string) => {
     handleSendImagesToInput([image]);
   }, [handleSendImagesToInput]);
+
+  const handleCopyUserMessage = useCallback(async (content: string, index: number) => {
+    try {
+      await copyTextToClipboard(content);
+      setCopiedMessageIndex(index);
+      window.setTimeout(() => {
+        setCopiedMessageIndex((current) => (current === index ? null : current));
+      }, 1400);
+    } catch {
+      chatDispatch({ type: 'SET_ERROR', error: '复制失败，请重试' });
+    }
+  }, [chatDispatch]);
 
   const handleRemoveInputImage = useCallback((index: number) => {
     chatDispatch({
@@ -1041,7 +1094,14 @@ export default function ChatPanel() {
         type: 'SET_CHAT_LIST',
         chatList: chat.chatList.map((c) =>
           c.id === chat.currentChatId
-            ? { ...c, message_count: c.message_count + 2, last_assistant_content: fullText }
+            ? {
+                ...c,
+                message_count: c.message_count + 2,
+                last_assistant_content: fullText,
+                used_models: debugInfo?.model
+                  ? Array.from(new Set([...(c.used_models || []), debugInfo.model]))
+                  : (c.used_models || []),
+              }
             : c
         ),
       });
@@ -1258,8 +1318,9 @@ export default function ChatPanel() {
                   )}
                 </div>
                 <div className={`chat-msg-content${formatError ? ' chat-msg-content-invalid' : ''}`}>
-                  {msg.role === 'assistant'
-                    ? <RenderErrorBoundary fallback={<div className="chat-render-error">AI 返回格式异常，无法渲染<pre className="chat-actions-code">{msg.content}</pre></div>}>
+                  {msg.role === 'assistant' ? (
+                    <>
+                      <RenderErrorBoundary fallback={<div className="chat-render-error">AI 返回格式异常，无法渲染<pre className="chat-actions-code">{msg.content}</pre></div>}>
                         <AssistantContent
                           content={msg.content}
                           canvasW={chatCanvasW}
@@ -1276,11 +1337,28 @@ export default function ChatPanel() {
                           onToggleIncludeLastUserRequirement={setIncludeLastUserRequirement}
                         />
                       </RenderErrorBoundary>
-                    : getUserMessageDisplayContent(msg)}
-                  <MessageImages
-                    images={msgImages}
-                    onSendToInput={msg.role === 'assistant' ? handleSendImagesToInput : undefined}
-                  />
+                      <MessageImages
+                        images={msgImages}
+                        onSendToInput={handleSendImagesToInput}
+                      />
+                    </>
+                  ) : (
+                    <div className="chat-msg-user-inline">
+                      <div className="chat-msg-user-body">
+                        <div>{getUserMessageDisplayContent(msg)}</div>
+                        <MessageImages images={msgImages} />
+                      </div>
+                      <button
+                        className="chat-user-copy-btn"
+                        type="button"
+                        onClick={() => handleCopyUserMessage(msg.content, i)}
+                        title="复制这条消息"
+                        aria-label="复制这条消息"
+                      >
+                        {copiedMessageIndex === i ? '已复制' : '复制'}
+                      </button>
+                    </div>
+                  )}
                 </div>
                     </>
                   );

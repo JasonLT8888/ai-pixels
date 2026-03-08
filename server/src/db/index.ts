@@ -1,6 +1,7 @@
 import Database, { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import { DEFAULT_SYSTEM_PROMPT } from 'shared/src/default-prompt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -11,6 +12,10 @@ import fs from 'fs';
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
 const db: BetterSqliteDatabase = new Database(dbPath);
+
+function generateChatSessionId() {
+  return randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+}
 
 // Enable WAL mode for better concurrent performance
 db.pragma('journal_mode = WAL');
@@ -59,6 +64,7 @@ db.exec(`
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title      TEXT NOT NULL DEFAULT '新对话',
+    session_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
@@ -91,6 +97,9 @@ try {
 } catch { /* already exists */ }
 try {
   db.exec(`ALTER TABLE chats ADD COLUMN compress_before_id INTEGER`);
+} catch { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE chats ADD COLUMN session_id TEXT`);
 } catch { /* already exists */ }
 
 // Migration: add context_window and compress_threshold to llm_config
@@ -133,12 +142,22 @@ const orphanProjects = db.prepare(
   `SELECT DISTINCT project_id FROM conversations WHERE chat_id IS NULL`
 ).all() as { project_id: number }[];
 for (const { project_id } of orphanProjects) {
+  const sessionId = generateChatSessionId();
   const chat = db.prepare(
-    `INSERT INTO chats (project_id, title) VALUES (?, '默认对话')`
-  ).run(project_id);
+    `INSERT INTO chats (project_id, title, session_id) VALUES (?, ?, ?)`
+  ).run(project_id, `会话 ${sessionId}`, sessionId);
   db.prepare(
     `UPDATE conversations SET chat_id = ? WHERE project_id = ? AND chat_id IS NULL`
   ).run(chat.lastInsertRowid, project_id);
+}
+
+const chatsWithoutSessionId = db.prepare(
+  `SELECT id FROM chats WHERE session_id IS NULL OR TRIM(session_id) = ''`
+).all() as { id: number }[];
+
+for (const { id } of chatsWithoutSessionId) {
+  const sessionId = generateChatSessionId();
+  db.prepare('UPDATE chats SET session_id = ? WHERE id = ?').run(sessionId, id);
 }
 
 // Seed default system prompt if not present (empty — hardcoded default is always prepended)

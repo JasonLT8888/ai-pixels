@@ -1,6 +1,11 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import db from '../db/index.js';
 import { resolveLLMConfig } from '../llm-config.js';
+
+function generateChatSessionId() {
+  return randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+}
 
 // Project-scoped routes: mounted at /api/projects
 export const projectChatsRouter = Router();
@@ -8,28 +13,38 @@ export const projectChatsRouter = Router();
 // GET /api/projects/:id/chats — list all chats for a project
 projectChatsRouter.get('/:id/chats', (req, res) => {
   const rows = db.prepare(`
-    SELECT c.id, c.title, c.canvas_w, c.canvas_h, c.created_at,
+    SELECT c.id, c.title, c.session_id, c.canvas_w, c.canvas_h, c.created_at,
            c.compressed_summary, c.compress_before_id,
            (SELECT COUNT(*) FROM conversations WHERE chat_id = c.id) AS message_count,
            (SELECT content FROM conversations
             WHERE chat_id = c.id AND role = 'assistant'
-            ORDER BY created_at DESC LIMIT 1) AS last_assistant_content
+            ORDER BY created_at DESC LIMIT 1) AS last_assistant_content,
+           (SELECT GROUP_CONCAT(DISTINCT model)
+            FROM conversations
+            WHERE chat_id = c.id AND model IS NOT NULL AND TRIM(model) <> '') AS used_models_csv
     FROM chats c
     WHERE c.project_id = ?
     ORDER BY c.created_at DESC
   `).all(req.params.id);
-  res.json(rows);
+
+  res.json(rows.map((row: any) => ({
+    ...row,
+    used_models: typeof row.used_models_csv === 'string' && row.used_models_csv.length > 0
+      ? row.used_models_csv.split(',').filter((model: string) => model.trim().length > 0)
+      : [],
+  })));
 });
 
 // POST /api/projects/:id/chats — create a new chat
 projectChatsRouter.post('/:id/chats', (req, res) => {
-  const title = req.body.title || '新对话';
+  const session_id = generateChatSessionId();
+  const title = req.body.title || `会话 ${session_id}`;
   const canvas_w = req.body.canvas_w || 32;
   const canvas_h = req.body.canvas_h || 32;
   const result = db.prepare(
-    'INSERT INTO chats (project_id, title, canvas_w, canvas_h) VALUES (?, ?, ?, ?)'
-  ).run(req.params.id, title, canvas_w, canvas_h);
-  res.status(201).json({ id: result.lastInsertRowid, title, canvas_w, canvas_h });
+    'INSERT INTO chats (project_id, title, session_id, canvas_w, canvas_h) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.params.id, title, session_id, canvas_w, canvas_h);
+  res.status(201).json({ id: result.lastInsertRowid, title, session_id, canvas_w, canvas_h, used_models: [] });
 });
 
 // DELETE /api/projects/:id/chats — clear all chats and messages for a project

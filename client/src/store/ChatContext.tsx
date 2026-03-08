@@ -4,10 +4,12 @@ import type { ChatMessage, LLMConfigProfile } from 'shared/src/types';
 export interface ChatInfo {
   id: number;
   title: string;
+  session_id?: string | null;
   canvas_w: number;
   canvas_h: number;
   created_at: string;
   message_count: number;
+  used_models?: string[];
   last_assistant_content?: string | null;
   compressed_summary?: string | null;
   compress_before_id?: number | null;
