@@ -140,6 +140,12 @@ function renderInstructionsToDataUrl(instructions: Instruction[]): string {
   return offscreen.toDataURL('image/png');
 }
 
+interface AssistantInstructionWarning {
+  summary: string;
+  feedbackDetail: string;
+  errorCount: number;
+}
+
 function getAssistantFormatError(content: string): string | null {
   const parsed = safeParse(content);
   if (parsed.instructions.length > 0) return null;
@@ -179,6 +185,24 @@ function getAssistantFormatError(content: string): string | null {
     const detail = err instanceof Error ? err.message : 'JSON 解析失败';
     return `JSON 语法错误: ${detail}`;
   }
+}
+
+function getAssistantInstructionWarning(content: string): AssistantInstructionWarning | null {
+  const parsed = safeParse(content);
+  const errorDetails = parsed.instructions
+    .map((instruction, index) => {
+      if (instruction[0] !== 'error') return null;
+      return `第 ${index + 1} 条: ${String(instruction[1])}\n原始指令: ${JSON.stringify(instruction[2])}`;
+    })
+    .filter((detail): detail is string => detail !== null);
+
+  if (errorDetails.length === 0) return null;
+
+  return {
+    summary: `检测到 ${errorDetails.length} 条错误指令，当前处于兼容模式，已忽略错误指令并继续渲染其他指令。`,
+    feedbackDetail: errorDetails.join('\n\n'),
+    errorCount: errorDetails.length,
+  };
 }
 
 function findLastUserRequirement(messages: ChatMessage[], beforeIndex: number): string | null {
@@ -546,7 +570,9 @@ function AssistantContent({
   onSelfCheck,
   onSendPreviewToInput,
   formatError,
+  instructionWarning,
   onFormatFeedback,
+  onInstructionWarningFeedback,
   includeLastUserRequirement,
   onToggleIncludeLastUserRequirement,
 }: {
@@ -556,7 +582,9 @@ function AssistantContent({
   onSelfCheck?: (instructions: Instruction[]) => void;
   onSendPreviewToInput?: (image: string) => void;
   formatError?: string | null;
+  instructionWarning?: AssistantInstructionWarning | null;
   onFormatFeedback?: () => void;
+  onInstructionWarningFeedback?: () => void;
   includeLastUserRequirement?: boolean;
   onToggleIncludeLastUserRequirement?: (checked: boolean) => void;
 }) {
@@ -614,6 +642,26 @@ function AssistantContent({
           {onFormatFeedback && (
             <button className="chat-format-feedback-btn" onClick={onFormatFeedback}>
               反馈错误
+            </button>
+          )}
+        </div>
+      )}
+      {!formatError && instructionWarning && (
+        <div className="chat-instruction-warning-row">
+          <span className="chat-instruction-warning-text">{instructionWarning.summary}</span>
+          {onToggleIncludeLastUserRequirement && (
+            <label className="chat-format-include-toggle warning">
+              <input
+                type="checkbox"
+                checked={!!includeLastUserRequirement}
+                onChange={(e) => onToggleIncludeLastUserRequirement(e.target.checked)}
+              />
+              附带上一条需求
+            </label>
+          )}
+          {onInstructionWarningFeedback && (
+            <button className="chat-format-feedback-btn warning" onClick={onInstructionWarningFeedback}>
+              回送错误
             </button>
           )}
         </div>
@@ -1208,6 +1256,50 @@ export default function ChatPanel() {
     executeAssistantRequest,
   ]);
 
+  const handleInstructionWarningFeedback = useCallback(async (
+    assistantMsg: ChatMessage,
+    instructionWarning: AssistantInstructionWarning,
+    assistantIndex: number,
+  ) => {
+    if (chat.streaming || !project.projectId || !chat.currentChatId) return;
+
+    const lastUserRequirement = includeLastUserRequirement
+      ? findLastUserRequirement(chat.messages, assistantIndex)
+      : null;
+
+    const prompt = [
+      '你上一条回复中包含错误指令。前端目前处于兼容模式，已经忽略错误指令并继续渲染其他指令。',
+      `错误指令数量: ${instructionWarning.errorCount}`,
+      '错误详情如下：',
+      instructionWarning.feedbackDetail,
+      ...(lastUserRequirement
+        ? ['原始用户需求如下（请严格遵循）：', lastUserRequirement]
+        : []),
+      '请重新生成并严格只返回 JSON 对象。需要绘图时使用 {"talk":"...","actions":[...]}；纯对话时可使用 {"talk":"...","actions":[]} 或 {"talk":"..."}。',
+      '请修正所有错误指令，并保留原本正确的绘图意图。',
+      '不要输出 Markdown 代码块，不要输出额外解释。',
+      '你上一条原始回复如下：',
+      assistantMsg.content,
+    ].join('\n');
+
+    const feedbackLabel = includeLastUserRequirement && lastUserRequirement
+      ? `[回送错误] 错误指令 ${instructionWarning.errorCount} 条（已附带上一条需求）`
+      : `[回送错误] 错误指令 ${instructionWarning.errorCount} 条`;
+
+    await executeAssistantRequest({
+      prompt,
+      images: [],
+      optimisticUserMessage: { project_id: project.projectId, role: 'user', content: feedbackLabel },
+    });
+  }, [
+    chat.streaming,
+    chat.currentChatId,
+    chat.messages,
+    includeLastUserRequirement,
+    project.projectId,
+    executeAssistantRequest,
+  ]);
+
   const handleRetryLastRequest = useCallback(async () => {
     if (!lastFailedRequest || chat.streaming) return;
     await executeAssistantRequest(lastFailedRequest, { appendUserMessage: false, retryLastUser: true });
@@ -1295,6 +1387,7 @@ export default function ChatPanel() {
               <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
                 {(() => {
                   const formatError = msg.role === 'assistant' ? getAssistantFormatError(msg.content) : null;
+                  const instructionWarning = msg.role === 'assistant' ? getAssistantInstructionWarning(msg.content) : null;
                   const msgImages = mergeImageUrls(
                     normalizeMessageImages(msg.images),
                     msg.role === 'assistant' ? extractImageSourcesFromText(msg.content) : [],
@@ -1317,7 +1410,7 @@ export default function ChatPanel() {
                     </>
                   )}
                 </div>
-                <div className={`chat-msg-content${formatError ? ' chat-msg-content-invalid' : ''}`}>
+                <div className={`chat-msg-content${formatError ? ' chat-msg-content-invalid' : instructionWarning ? ' chat-msg-content-warning' : ''}`}>
                   {msg.role === 'assistant' ? (
                     <>
                       <RenderErrorBoundary fallback={<div className="chat-render-error">AI 返回格式异常，无法渲染<pre className="chat-actions-code">{msg.content}</pre></div>}>
@@ -1328,9 +1421,15 @@ export default function ChatPanel() {
                           onSelfCheck={!chat.streaming ? (instructions) => handleSelfCheck(instructions, i) : undefined}
                           onSendPreviewToInput={!chat.streaming ? handleSendPreviewImageToInput : undefined}
                           formatError={formatError}
+                          instructionWarning={instructionWarning}
                           onFormatFeedback={
                             !chat.streaming && formatError
                               ? () => handleFormatFeedback(msg, formatError, i)
+                              : undefined
+                          }
+                          onInstructionWarningFeedback={
+                            !chat.streaming && !formatError && instructionWarning
+                              ? () => handleInstructionWarningFeedback(msg, instructionWarning, i)
                               : undefined
                           }
                           includeLastUserRequirement={includeLastUserRequirement}
