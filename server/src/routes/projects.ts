@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../db/index.js';
+import { normalizeProjectInstructions } from 'shared/src/instruction-format.js';
 
 const router = Router();
 
@@ -14,9 +15,10 @@ router.get('/', (_req, res) => {
 // POST /api/projects — create a new project
 router.post('/', (req, res) => {
   const { name = 'Untitled', canvas_w = 32, canvas_h = 32 } = req.body;
+  const instructions = JSON.stringify(normalizeProjectInstructions([], { width: canvas_w, height: canvas_h }));
   const result = db.prepare(
-    'INSERT INTO projects (name, canvas_w, canvas_h) VALUES (?, ?, ?)'
-  ).run(name, canvas_w, canvas_h);
+    'INSERT INTO projects (name, canvas_w, canvas_h, instructions) VALUES (?, ?, ?, ?)'
+  ).run(name, canvas_w, canvas_h, instructions);
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(project);
 });
@@ -31,12 +33,18 @@ router.get('/:id', (req, res) => {
 // PUT /api/projects/:id/instructions — save instructions
 router.put('/:id/instructions', (req, res) => {
   const { instructions } = req.body;
-  if (!Array.isArray(instructions)) {
-    return res.status(400).json({ error: 'instructions must be an array' });
+  let normalized;
+  try {
+    const project = db.prepare('SELECT canvas_w, canvas_h FROM projects WHERE id = ?').get(req.params.id) as { canvas_w: number; canvas_h: number } | undefined;
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    normalized = normalizeProjectInstructions(instructions, { width: project.canvas_w, height: project.canvas_h });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid instructions';
+    return res.status(400).json({ error: message });
   }
   const result = db.prepare(
     'UPDATE projects SET instructions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).run(JSON.stringify(instructions), req.params.id);
+  ).run(JSON.stringify(normalized), req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Project not found' });
   res.json({ ok: true });
 });

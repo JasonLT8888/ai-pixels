@@ -12,6 +12,11 @@ export async function createChat(projectId: number, title?: string, canvasW?: nu
   return res.json();
 }
 
+export async function clearProjectChats(projectId: number) {
+  const res = await fetch(`/api/projects/${projectId}/chats`, { method: 'DELETE' });
+  return res.json();
+}
+
 export async function deleteChat(chatId: number) {
   const res = await fetch(`/api/chats/${chatId}`, { method: 'DELETE' });
   return res.json();

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
 import { saveInstructions } from '../api/projects';
+import { normalizeProjectInstructions } from 'shared/src/instruction-format';
 import type { Instruction } from 'shared/src/types';
 
 export default function JsonEditor() {
-  const { instructions, projectId } = useProject();
+  const { instructions, projectId, canvasWidth, canvasHeight } = useProject();
   const dispatch = useProjectDispatch();
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -20,21 +21,18 @@ export default function JsonEditor() {
   const apply = useCallback(() => {
     try {
       const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) {
-        setError('必须是 JSON 数组');
-        return;
-      }
+      const normalized = normalizeProjectInstructions(parsed, { width: canvasWidth, height: canvasHeight });
       setError('');
       dirty.current = false;
-      dispatch({ type: 'SET_INSTRUCTIONS', instructions: parsed as Instruction[] });
+      dispatch({ type: 'SET_INSTRUCTIONS', instructions: normalized as Instruction[] });
 
       if (projectId) {
-        saveInstructions(projectId, parsed).catch(() => {});
+        saveInstructions(projectId, normalized).catch(() => {});
       }
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [text, dispatch, projectId]);
+  }, [text, dispatch, projectId, canvasWidth, canvasHeight]);
 
   const handleChange = (value: string) => {
     dirty.current = true;
@@ -57,7 +55,7 @@ export default function JsonEditor() {
           }
         }}
         spellCheck={false}
-        placeholder='在此粘贴指令 JSON，例如 [["canvas",32,32,"#fff"],["color","#f00"],["rect",2,2,10,10]]'
+        placeholder='在此粘贴指令 JSON，例如 [["canvas",32,32],["palette",["#f00","#00f"]],["rect",2,2,10,10,0],["ellipse",20,16,6,6,1]]'
       />
       {error && <div className="json-error">{error}</div>}
     </div>

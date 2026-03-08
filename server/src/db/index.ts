@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database, { type Database as BetterSqliteDatabase } from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DEFAULT_SYSTEM_PROMPT } from 'shared/src/default-prompt.js';
@@ -10,7 +10,7 @@ const dbPath = path.join(__dirname, '..', '..', 'data', 'ai-pixels.db');
 import fs from 'fs';
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-const db = new Database(dbPath);
+const db: BetterSqliteDatabase = new Database(dbPath);
 
 // Enable WAL mode for better concurrent performance
 db.pragma('journal_mode = WAL');

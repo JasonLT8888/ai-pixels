@@ -212,41 +212,43 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
       case 'palette':
         if (Array.isArray(inst[1])) palette = inst[1];
         break;
-      case 'color':
-        if (inst[1] !== undefined && inst[1] !== null) {
-          currentColor = parseColor(inst[1] as string | number, palette);
-          currentColorIndex = typeof inst[1] === 'number' ? inst[1] as number : null;
-        }
-        break;
       case 'pixel': {
-        if (typeof inst[1] !== 'number' || typeof inst[2] !== 'number') break;
-        const color = inst[3] !== undefined ? parseColor(inst[3] as string | number, palette) : currentColor;
-        setPixel(data, w, inst[1], inst[2], color);
+        if (typeof inst[1] !== 'number' || typeof inst[2] !== 'number' || typeof inst[3] !== 'number') break;
+        currentColor = parseColor(inst[3], palette);
+        currentColorIndex = inst[3];
+        setPixel(data, w, inst[1], inst[2], currentColor);
         break;
       }
       case 'pixels': {
-        if (!Array.isArray(inst[1])) break;
+        if (!Array.isArray(inst[1]) || typeof inst[2] !== 'number') break;
         const coords = inst[1];
-        const color = inst[2] !== undefined ? parseColor(inst[2] as string | number, palette) : currentColor;
+        currentColor = parseColor(inst[2], palette);
+        currentColorIndex = inst[2];
         for (let j = 0; j < coords.length; j += 2) {
           if (typeof coords[j] === 'number' && typeof coords[j + 1] === 'number') {
-            setPixel(data, w, coords[j], coords[j + 1], color);
+            setPixel(data, w, coords[j], coords[j + 1], currentColor);
           }
         }
         break;
       }
       case 'rect': {
         const [, x, y, rw, rh] = inst;
-        if (typeof x !== 'number' || typeof y !== 'number' || typeof rw !== 'number' || typeof rh !== 'number') break;
-        const fill = inst[5] !== undefined ? (typeof inst[5] === 'number' && inst[5] <= 1 ? inst[5] : 1) : 1;
-        const colorArg = inst[6] ?? (typeof inst[5] === 'string' || (typeof inst[5] === 'number' && inst[5] > 1) ? inst[5] : undefined);
-        const color = colorArg !== undefined ? parseColor(colorArg as string | number, palette) : currentColor;
+        if (
+          typeof x !== 'number' ||
+          typeof y !== 'number' ||
+          typeof rw !== 'number' ||
+          typeof rh !== 'number' ||
+          typeof inst[5] !== 'number'
+        ) break;
+        currentColor = parseColor(inst[5], palette);
+        currentColorIndex = inst[5];
+        const fill = typeof inst[6] === 'number' ? inst[6] : 1;
 
         if (fill) {
           for (let py = y; py < y + rh; py++) {
             for (let px = x; px < x + rw; px++) {
               if (px >= 0 && px < w && py >= 0 && py < h) {
-                setPixel(data, w, px, py, color);
+                setPixel(data, w, px, py, currentColor);
               }
             }
           }
@@ -254,14 +256,14 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
           // Stroke only
           for (let px = x; px < x + rw; px++) {
             if (px >= 0 && px < w) {
-              if (y >= 0 && y < h) setPixel(data, w, px, y, color);
-              if (y + rh - 1 >= 0 && y + rh - 1 < h) setPixel(data, w, px, y + rh - 1, color);
+              if (y >= 0 && y < h) setPixel(data, w, px, y, currentColor);
+              if (y + rh - 1 >= 0 && y + rh - 1 < h) setPixel(data, w, px, y + rh - 1, currentColor);
             }
           }
           for (let py = y; py < y + rh; py++) {
             if (py >= 0 && py < h) {
-              if (x >= 0 && x < w) setPixel(data, w, x, py, color);
-              if (x + rw - 1 >= 0 && x + rw - 1 < w) setPixel(data, w, x + rw - 1, py, color);
+              if (x >= 0 && x < w) setPixel(data, w, x, py, currentColor);
+              if (x + rw - 1 >= 0 && x + rw - 1 < w) setPixel(data, w, x + rw - 1, py, currentColor);
             }
           }
         }
@@ -269,18 +271,31 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
       }
       case 'ellipse': {
         const [, cx, cy, rx, ry] = inst;
-        if (typeof cx !== 'number' || typeof cy !== 'number' || typeof rx !== 'number' || typeof ry !== 'number') break;
-        const fill = inst[5] !== undefined ? (typeof inst[5] === 'number' && inst[5] <= 1 ? inst[5] : 1) : 1;
-        const colorArg = inst[6] ?? (typeof inst[5] === 'string' || (typeof inst[5] === 'number' && inst[5] > 1) ? inst[5] : undefined);
-        const color = colorArg !== undefined ? parseColor(colorArg as string | number, palette) : currentColor;
-        drawEllipse(data, w, h, cx, cy, rx, ry, !!fill, color);
+        if (
+          typeof cx !== 'number' ||
+          typeof cy !== 'number' ||
+          typeof rx !== 'number' ||
+          typeof ry !== 'number' ||
+          typeof inst[5] !== 'number'
+        ) break;
+        currentColor = parseColor(inst[5], palette);
+        currentColorIndex = inst[5];
+        const fill = typeof inst[6] === 'number' ? inst[6] : 1;
+        drawEllipse(data, w, h, cx, cy, rx, ry, !!fill, currentColor);
         break;
       }
       case 'line': {
         const [, x1, y1, x2, y2] = inst;
-        if (typeof x1 !== 'number' || typeof y1 !== 'number' || typeof x2 !== 'number' || typeof y2 !== 'number') break;
-        const color = inst[5] !== undefined ? parseColor(inst[5] as string | number, palette) : currentColor;
-        drawLine(data, w, h, x1, y1, x2, y2, color);
+        if (
+          typeof x1 !== 'number' ||
+          typeof y1 !== 'number' ||
+          typeof x2 !== 'number' ||
+          typeof y2 !== 'number' ||
+          typeof inst[5] !== 'number'
+        ) break;
+        currentColor = parseColor(inst[5], palette);
+        currentColorIndex = inst[5];
+        drawLine(data, w, h, x1, y1, x2, y2, currentColor);
         break;
       }
       case 'comment': {
@@ -289,9 +304,10 @@ export function executeInstructions(instructions: Instruction[], upToStep?: numb
       }
       case 'flood': {
         const [, fx, fy] = inst;
-        if (typeof fx !== 'number' || typeof fy !== 'number') break;
-        const color = inst[3] !== undefined ? parseColor(inst[3] as string | number, palette) : currentColor;
-        floodFill(data, w, h, fx, fy, color);
+        if (typeof fx !== 'number' || typeof fy !== 'number' || typeof inst[3] !== 'number') break;
+        currentColor = parseColor(inst[3], palette);
+        currentColorIndex = inst[3];
+        floodFill(data, w, h, fx, fy, currentColor);
         break;
       }
     }

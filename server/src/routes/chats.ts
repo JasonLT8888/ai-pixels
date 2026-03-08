@@ -32,6 +32,20 @@ projectChatsRouter.post('/:id/chats', (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid, title, canvas_w, canvas_h });
 });
 
+// DELETE /api/projects/:id/chats — clear all chats and messages for a project
+projectChatsRouter.delete('/:id/chats', (req, res) => {
+  const chatRows = db.prepare('SELECT id FROM chats WHERE project_id = ?').all(req.params.id) as { id: number }[];
+  const chatIds = chatRows.map((row) => row.id);
+
+  if (chatIds.length > 0) {
+    const placeholders = chatIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM conversations WHERE chat_id IN (${placeholders})`).run(...chatIds);
+  }
+
+  db.prepare('DELETE FROM chats WHERE project_id = ?').run(req.params.id);
+  res.json({ ok: true, deleted: chatIds.length });
+});
+
 // Chat-scoped routes: mounted at /api/chats
 export const chatsRouter = Router();
 

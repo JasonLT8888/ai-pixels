@@ -1,10 +1,11 @@
 import { useEffect, useRef, useCallback, useState, useMemo, Component, type ReactNode } from 'react';
 import { useChat, useChatDispatch } from '../store/ChatContext';
 import { useProject, useProjectDispatch } from '../store/ProjectContext';
-import { fetchChats, createChat, deleteChat, clearChatMessages, fetchChatMessages, sendChatMessage, compressChat } from '../api/chat';
+import { fetchChats, createChat, deleteChat, clearChatMessages, clearProjectChats, fetchChatMessages, sendChatMessage, compressChat } from '../api/chat';
 import { fetchLLMConfig, fetchModels, type ModelInfo } from '../api/config';
 import { saveInstructions } from '../api/projects';
 import { readSSEStream } from '../utils/sse-parser';
+import { buildProjectInstructionsFromActions, normalizeProjectInstructions } from 'shared/src/instruction-format';
 import { parseInstructionsFromText } from 'shared/src/instruction-parser';
 import { executeInstructions } from '../canvas/renderer';
 import type { ChatMessage, Instruction, LLMConfigProfile } from 'shared/src/types';
@@ -185,12 +186,7 @@ function findLastUserRequirement(messages: ChatMessage[], beforeIndex: number): 
 
 /** Prepend canvas instruction to an instruction list */
 function withCanvas(instructions: Instruction[], w: number, h: number): Instruction[] {
-  // Strip any existing canvas instructions AI might have snuck in
-  const filtered = instructions.filter((i) => {
-    const head = (i as unknown[])[0];
-    return Array.isArray(i) && head !== 'canvas' && head !== 'C';
-  });
-  return [['canvas', w, h] as Instruction, ...filtered];
+  return buildProjectInstructionsFromActions(instructions, { width: w, height: h });
 }
 
 /** Mini canvas preview for a set of instructions */
@@ -444,18 +440,30 @@ function HistoryTab({
   onSwitch,
   onDelete,
   onNew,
+  onClearAll,
 }: {
   chatList: ChatInfo[];
   currentChatId: number | null;
   onSwitch: (id: number) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
   onNew: () => void;
+  onClearAll: () => void;
 }) {
   return (
     <div className="chat-history-list">
       <div className="chat-history-header">
         <span className="chat-history-header-title">历史对话</span>
-        <button className="chat-toolbar-btn" onClick={onNew} title="新建对话">+ 新建</button>
+        <div className="chat-history-header-actions">
+          <button className="chat-toolbar-btn" onClick={onNew} title="新建对话">+ 新建</button>
+          <button
+            className="chat-toolbar-btn"
+            onClick={onClearAll}
+            title="清空历史对话"
+            disabled={chatList.length === 0}
+          >
+            清空
+          </button>
+        </div>
       </div>
       <div className="chat-history-scroll">
         {chatList.map((c) => (
@@ -618,7 +626,7 @@ export default function ChatPanel() {
     chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: newChat.id });
     chatDispatch({ type: 'SET_MESSAGES', messages: [] });
     chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
-    const initialInstructions: Instruction[] = [['canvas', newChatW, newChatH]];
+    const initialInstructions = normalizeProjectInstructions([], { width: newChatW, height: newChatH });
     projectDispatch({ type: 'SET_INSTRUCTIONS', instructions: initialInstructions });
     saveInstructions(project.projectId, initialInstructions).catch(() => {});
     setShowSizePicker(false);
@@ -708,6 +716,23 @@ export default function ChatPanel() {
       }
     }
   }, [chat.currentChatId, chat.chatList, project.projectId, chatDispatch, handleSwitchChat, handleNewChat]);
+
+  const handleClearHistory = useCallback(async () => {
+    if (!project.projectId || chat.chatList.length === 0) return;
+    if (!window.confirm(`确定清空当前项目下的全部 ${chat.chatList.length} 条历史对话吗？此操作不可撤销。`)) {
+      return;
+    }
+
+    await clearProjectChats(project.projectId);
+    chatDispatch({ type: 'SET_CHAT_LIST', chatList: [] });
+    chatDispatch({ type: 'SET_CURRENT_CHAT', chatId: null });
+    chatDispatch({ type: 'SET_MESSAGES', messages: [] });
+    chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
+    chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: null, compressBeforeId: null });
+    setLastFailedRequest(null);
+    setShowSizePicker(true);
+    setTab('chat');
+  }, [project.projectId, chat.chatList.length, chatDispatch]);
 
   const executeAssistantRequest = useCallback(async (
     request: RetryRequest,
@@ -1159,6 +1184,7 @@ export default function ChatPanel() {
           onSwitch={handleSwitchChat}
           onDelete={handleDeleteChat}
           onNew={handleNewChat}
+          onClearAll={handleClearHistory}
         />
       )}
 

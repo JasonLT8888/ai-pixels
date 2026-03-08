@@ -10,13 +10,12 @@ export default function HelpPanel() {
           <tbody>
             <tr><td>C</td><td>画布初始化</td><td><code>["C", w, h]</code> / <code>["C", w, h, bg]</code></td></tr>
             <tr><td>pal</td><td>调色板</td><td><code>["pal", ["#f00","#0f0",...]]</code></td></tr>
-            <tr><td>c</td><td>设置颜色</td><td><code>["c", 颜色/索引]</code></td></tr>
-            <tr><td>p</td><td>单像素</td><td><code>["p", x, y]</code></td></tr>
-            <tr><td>P</td><td>批量像素</td><td><code>["P", [x,y, x,y, ...]]</code></td></tr>
-            <tr><td>r</td><td>矩形</td><td><code>["r", x, y, w, h, fill?, color?]</code></td></tr>
-            <tr><td>e</td><td>椭圆</td><td><code>["e", cx, cy, rx, ry, fill?, color?]</code></td></tr>
-            <tr><td>l</td><td>直线</td><td><code>["l", x1, y1, x2, y2, color?]</code></td></tr>
-            <tr><td>f</td><td>填充</td><td><code>["f", x, y, color?]</code></td></tr>
+            <tr><td>p</td><td>单像素</td><td><code>["p", x, y, colorIndex]</code></td></tr>
+            <tr><td>P</td><td>批量像素</td><td><code>["P", [x,y, x,y, ...], colorIndex]</code></td></tr>
+            <tr><td>r</td><td>矩形</td><td><code>["r", x, y, w, h, colorIndex, fill?]</code></td></tr>
+            <tr><td>e</td><td>椭圆</td><td><code>["e", cx, cy, rx, ry, colorIndex, fill?]</code></td></tr>
+            <tr><td>l</td><td>直线</td><td><code>["l", x1, y1, x2, y2, colorIndex]</code></td></tr>
+            <tr><td>f</td><td>填充</td><td><code>["f", x, y, colorIndex]</code></td></tr>
             <tr><td>#</td><td>注释</td><td><code>["#", "说明文字"]</code></td></tr>
           </tbody>
         </table>
@@ -42,23 +41,20 @@ export default function HelpPanel() {
         <pre className="help-code">{`{
   "talk": "好的，给你画一个红色方块和蓝色圆形",
   "actions": [
-    ["C", 32, 32],
     ["pal", ["#f00", "#00f"]],
-    ["c", 0],
-    ["r", 2, 2, 10, 10],
-    ["c", 1],
-    ["e", 20, 16, 6, 6]
+    ["r", 2, 2, 10, 10, 0],
+    ["e", 20, 16, 6, 6, 1]
   ]
 }`}</pre>
-        <p className="help-note">纯对话时 actions 为空数组 []</p>
+        <p className="help-note">AI 不输出 canvas；系统会按当前对话画布尺寸自动补到项目指令最前面。</p>
       </div>
 
       <div className="help-section">
         <h4>参数规则</h4>
         <ul className="help-list">
-          <li>参数按位置排列，尾部可选参数可省略</li>
+          <li>完整项目指令顺序固定为：canvas → palette → 绘图指令</li>
           <li>fill: 0=描边, 1=填充（默认）</li>
-          <li>每条指令最后位置预留给 color 覆盖</li>
+          <li>每条绘图指令都必须显式提供 colorIndex，且来自 palette</li>
           <li>P 的坐标为扁平数组: [x,y, x,y, ...]</li>
         </ul>
       </div>

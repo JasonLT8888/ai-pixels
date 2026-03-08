@@ -198,23 +198,29 @@ conversations: id, project_id, chat_id, role, content, images(JSON), model, crea
 采用紧凑的数组格式，最大限度节省 LLM token 消耗：
 
 ```jsonc
-// 对象格式 ~45 tokens → 数组格式 ~18 tokens
-[["c","#f00"],["r",2,2,10,10],["c","#00f"],["e",20,16,6,6]]
+// 完整项目指令固定为 canvas -> palette -> drawing
+[["C",32,32],["pal",["#f00","#00f"]],["r",2,2,10,10,0],["e",20,16,6,6,1]]
 ```
 
 支持的指令类型：
 
 | 短码 | 全名 | 说明 |
 |------|------|------|
-| `c` | color | 设置当前颜色 |
+| `C` | canvas | 画布初始化（仅项目内部保存，AI 不输出） |
+| `pal` | palette | 调色板定义 |
 | `p` | pixel | 单像素 |
 | `P` | pixels | 批量像素（扁平坐标数组） |
 | `r` | rect | 矩形（填充/描边） |
 | `e` | ellipse | 椭圆/圆 |
 | `l` | line | 直线（Bresenham） |
 | `f` | flood | 洪水填充（BFS） |
-| `pal` | palette | 调色板定义 |
 | `#` | comment | 注释（不渲染） |
+
+规则补充：
+
+- 完整项目指令顺序固定为 `canvas -> palette -> drawing actions`
+- AI 回复中的 `actions` 不包含 `canvas`，由系统按当前对话画布尺寸自动补齐
+- 不再支持 `c/color` 当前颜色状态，所有绘图指令必须显式携带 `colorIndex`
 
 详细规范见 [docs/instruction-spec.md](docs/instruction-spec.md)。
 

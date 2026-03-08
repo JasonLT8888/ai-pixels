@@ -8,6 +8,7 @@ import ChatPanel from './components/ChatPanel';
 import HelpPanel from './components/HelpPanel';
 import SettingsModal from './components/SettingsModal';
 import { fetchProjects, createProject, fetchProject } from './api/projects';
+import { normalizeProjectInstructions } from 'shared/src/instruction-format';
 import type { Instruction } from 'shared/src/types';
 
 export default function App() {
@@ -111,7 +112,10 @@ export default function App() {
         } else {
           project = await createProject('默认项目');
         }
-        const instructions: Instruction[] = JSON.parse(project.instructions || '[]');
+        const instructions: Instruction[] = normalizeProjectInstructions(
+          JSON.parse(project.instructions || '[]'),
+          { width: project.canvas_w, height: project.canvas_h },
+        );
         dispatch({
           type: 'SET_PROJECT',
           projectId: project.id,
@@ -212,7 +216,7 @@ export default function App() {
 
           {/* 底部居中：当前画笔颜色 */}
           <div className="canvas-overlay-color">
-            <span className="color-label">当前画笔:</span>
+            <span className="color-label">当前颜色:</span>
             {state.currentColorIndex !== null && (
               <span className="color-index">{state.currentColorIndex}</span>
             )}
