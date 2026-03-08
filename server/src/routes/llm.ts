@@ -22,8 +22,23 @@ router.post('/chat', async (req: Request, res: Response) => {
 
   // 1. Load LLM config
   const config = resolveLLMConfig(typeof config_id === 'number' ? config_id : undefined);
-  if (!config?.api_url || !config?.api_token || !config?.model) {
-    return res.status(400).json({ error: 'LLM not configured. Please set API URL, token, and model in settings.' });
+  if (!config) {
+    return res.status(400).json({
+      code: 'LLM_CONFIG_MISSING',
+      error: '未找到可用的 LLM 配置，请先在设置中新增 API 地址、Token 和模型。',
+    });
+  }
+
+  const missingFields: string[] = [];
+  if (!config.api_url) missingFields.push('API 地址');
+  if (!config.api_token) missingFields.push('API Token');
+  if (!config.model) missingFields.push('默认模型');
+
+  if (missingFields.length > 0) {
+    return res.status(400).json({
+      code: 'LLM_CONFIG_INCOMPLETE',
+      error: `当前 LLM 配置不完整，缺少：${missingFields.join('、')}。请在设置中补齐后重试。`,
+    });
   }
 
   // Use request model if provided, otherwise fall back to config

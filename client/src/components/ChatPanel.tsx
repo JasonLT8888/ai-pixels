@@ -712,11 +712,102 @@ type RetryRequest = {
   optimisticUserMessage: ChatMessage;
 };
 
+type ConnectivityState = 'checking' | 'online' | 'server-offline';
+
+type AvailabilityHint = {
+  kind: 'server-offline' | 'llm-unconfigured' | 'llm-config-incomplete';
+  tone: 'danger' | 'warning';
+  title: string;
+  detail: string;
+  compactDetail: string;
+  actionLabel: string;
+};
+
+function createRequestError(message: string, code?: string): Error & { code?: string } {
+  const error = new Error(message) as Error & { code?: string };
+  if (code) error.code = code;
+  return error;
+}
+
+function getRequestErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null;
+  return typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code
+    : null;
+}
+
+function isConnectionFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /Failed to fetch|NetworkError|Load failed/i.test(message);
+}
+
+function getMissingConfigFields(config: LLMConfigProfile | null): string[] {
+  if (!config) return [];
+
+  const fields: string[] = [];
+  if (!config.api_url?.trim()) fields.push('API 地址');
+  if (!config.token_set) fields.push('API Token');
+  if (!config.model?.trim()) fields.push('默认模型');
+  return fields;
+}
+
+function getAvailabilityHint(
+  connectivityState: ConnectivityState,
+  profiles: LLMConfigProfile[],
+  selectedConfig: LLMConfigProfile | null,
+): AvailabilityHint | null {
+  if (connectivityState === 'server-offline') {
+    return {
+      kind: 'server-offline',
+      tone: 'danger',
+      title: '后端未连接',
+      detail: '当前无法连接到后端 API。请先启动服务（npm run dev:server 或 npm run dev），确认 /api 可用后再重试。',
+      compactDetail: '后端未连接，请先启动服务。',
+      actionLabel: '重新检测',
+    };
+  }
+
+  if (profiles.length === 0) {
+    return {
+      kind: 'llm-unconfigured',
+      tone: 'warning',
+      title: 'LLM 未配置',
+      detail: '后端已连接，但还没有可用的 LLM 配置。请在右上角“设置”里新增 API 地址、Token 和模型，然后刷新当前状态。',
+      compactDetail: '请先完成 LLM 配置。',
+      actionLabel: '已完成设置后刷新',
+    };
+  }
+
+  const missingFields = getMissingConfigFields(selectedConfig);
+  if (missingFields.length > 0) {
+    const configName = selectedConfig?.name?.trim() || '当前配置';
+    return {
+      kind: 'llm-config-incomplete',
+      tone: 'warning',
+      title: '当前配置未完成',
+      detail: `${configName} 缺少 ${missingFields.join('、')}。请在右上角“设置”里补齐后再发送请求。`,
+      compactDetail: `当前配置缺少 ${missingFields.join('、')}。`,
+      actionLabel: '已完成设置后刷新',
+    };
+  }
+
+  return null;
+}
+
 function normalizeRequestError(error: unknown): string {
+  const code = getRequestErrorCode(error);
   const message = error instanceof Error ? error.message : '请求失败，请重试';
 
+  if (code === 'LLM_CONFIG_MISSING') {
+    return 'LLM 尚未配置。请在右上角“设置”里新增 API 地址、Token 和模型后再试。';
+  }
+
+  if (code === 'LLM_CONFIG_INCOMPLETE') {
+    return message;
+  }
+
   if (/Failed to fetch/i.test(message)) {
-    return '连接已中断，请检查服务或网络后重试';
+    return '无法连接到后端服务，请确认后端已启动后再重试';
   }
 
   if (/No response body/i.test(message)) {
@@ -837,11 +928,17 @@ export default function ChatPanel() {
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [includeLastUserRequirement, setIncludeLastUserRequirement] = useState(true);
   const [lastFailedRequest, setLastFailedRequest] = useState<RetryRequest | null>(null);
+  const [connectivityState, setConnectivityState] = useState<ConnectivityState>('checking');
+  const [refreshingAvailability, setRefreshingAvailability] = useState(false);
   const lastCompressMsgCount = useRef<number>(0);
   const modelsInfoRef = useRef<ModelInfo[]>([]);
   const selectedConfig = useMemo(
     () => chat.configProfiles.find((profile) => profile.id === chat.selectedConfigId) ?? null,
     [chat.configProfiles, chat.selectedConfigId],
+  );
+  const availabilityHint = useMemo(
+    () => getAvailabilityHint(connectivityState, chat.configProfiles, selectedConfig),
+    [connectivityState, chat.configProfiles, selectedConfig],
   );
 
   // Current chat's canvas size
@@ -919,15 +1016,33 @@ export default function ChatPanel() {
     }
   }, [chatDispatch]);
 
-  // Load config profiles and initial model list from server
-  useEffect(() => {
-    fetchLLMConfig().then((collection) => {
+  const refreshAvailabilityState = useCallback(async () => {
+    setRefreshingAvailability(true);
+    setConnectivityState('checking');
+
+    try {
+      const collection = await fetchLLMConfig();
       const profiles = collection.profiles || [];
       const activeConfig = profiles.find((item) => item.id === collection.active_config_id) ?? profiles[0] ?? null;
+      setConnectivityState('online');
       chatDispatch({ type: 'SET_CONFIG_PROFILES', profiles });
-      applyConfigSelection(activeConfig, activeConfig?.model);
-    }).catch(() => {});
+      await applyConfigSelection(activeConfig, activeConfig?.model);
+    } catch (error) {
+      if (isConnectionFailure(error)) {
+        setConnectivityState('server-offline');
+      } else {
+        setConnectivityState('online');
+        chatDispatch({ type: 'SET_ERROR', error: normalizeRequestError(error) });
+      }
+    } finally {
+      setRefreshingAvailability(false);
+    }
   }, [applyConfigSelection, chatDispatch]);
+
+  // Load config profiles and initial model list from server
+  useEffect(() => {
+    refreshAvailabilityState().catch(() => {});
+  }, [refreshAvailabilityState]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -1112,9 +1227,11 @@ export default function ChatPanel() {
       );
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(err.error || 'Request failed');
+        const err = await response.json().catch(() => ({ error: 'Request failed', code: undefined }));
+        throw createRequestError(err.error || 'Request failed', typeof err.code === 'string' ? err.code : undefined);
       }
+
+      setConnectivityState('online');
 
       const fullText = await readSSEStream(
         response,
@@ -1156,6 +1273,11 @@ export default function ChatPanel() {
 
       setLastFailedRequest(null);
     } catch (err) {
+      if (isConnectionFailure(err)) {
+        setConnectivityState('server-offline');
+      } else {
+        setConnectivityState('online');
+      }
       setLastFailedRequest(request);
       chatDispatch({ type: 'SET_ERROR', error: normalizeRequestError(err) });
     } finally {
@@ -1169,6 +1291,15 @@ export default function ChatPanel() {
     const outgoingImages = chat.inputImages;
     const messageText = text || (outgoingImages.length > 0 ? '请参考这些图片进行创作。' : '');
     if (!messageText || chat.streaming || !project.projectId || !chat.currentChatId) return;
+    if (connectivityState === 'checking') {
+      chatDispatch({ type: 'SET_ERROR', error: '正在检测后端与配置状态，请稍后再试' });
+      return;
+    }
+    if (availabilityHint) {
+      setLastFailedRequest(null);
+      chatDispatch({ type: 'SET_ERROR', error: availabilityHint.detail });
+      return;
+    }
 
     const request: RetryRequest = {
       prompt: messageText,
@@ -1184,7 +1315,17 @@ export default function ChatPanel() {
     chatDispatch({ type: 'SET_INPUT', text: '' });
     chatDispatch({ type: 'SET_INPUT_IMAGES', images: [] });
     await executeAssistantRequest(request);
-  }, [chat.inputText, chat.inputImages, chat.streaming, chat.currentChatId, project.projectId, chatDispatch, executeAssistantRequest]);
+  }, [
+    chat.inputText,
+    chat.inputImages,
+    chat.streaming,
+    chat.currentChatId,
+    project.projectId,
+    chatDispatch,
+    connectivityState,
+    availabilityHint,
+    executeAssistantRequest,
+  ]);
 
   // Self-check: render instructions to image, send to AI for review
   const handleSelfCheck = useCallback(async (instructions: Instruction[], assistantIndex: number) => {
@@ -1321,9 +1462,19 @@ export default function ChatPanel() {
   // Manual compress handler
   const handleCompress = useCallback(async () => {
     if (!chat.currentChatId || chat.compressing) return;
+    if (connectivityState === 'checking') {
+      chatDispatch({ type: 'SET_ERROR', error: '正在检测后端与配置状态，请稍后再试' });
+      return;
+    }
+    if (availabilityHint) {
+      setLastFailedRequest(null);
+      chatDispatch({ type: 'SET_ERROR', error: availabilityHint.detail });
+      return;
+    }
     chatDispatch({ type: 'SET_COMPRESSING', compressing: true });
     try {
       const result = await compressChat(chat.currentChatId, chat.selectedModel || undefined, chat.selectedConfigId || undefined);
+      setConnectivityState('online');
       if (result.error) {
         setLastFailedRequest(null);
         chatDispatch({ type: 'SET_ERROR', error: result.error });
@@ -1331,12 +1482,48 @@ export default function ChatPanel() {
         chatDispatch({ type: 'SET_COMPRESSION', compressedSummary: result.compressed_summary, compressBeforeId: result.compress_before_id });
       }
     } catch (err: any) {
+      if (isConnectionFailure(err)) {
+        setConnectivityState('server-offline');
+      }
       setLastFailedRequest(null);
       chatDispatch({ type: 'SET_ERROR', error: err.message || '压缩失败' });
     } finally {
       chatDispatch({ type: 'SET_COMPRESSING', compressing: false });
     }
-  }, [chat.currentChatId, chat.compressing, chat.selectedModel, chatDispatch]);
+  }, [
+    chat.currentChatId,
+    chat.compressing,
+    chat.selectedModel,
+    chat.selectedConfigId,
+    chatDispatch,
+    connectivityState,
+    availabilityHint,
+  ]);
+
+  const sendDisabledReason = useMemo(() => {
+    if (chat.streaming) return 'AI 正在回复';
+    if (connectivityState === 'checking') return '正在检测后端与配置状态';
+    if (availabilityHint) return availabilityHint.compactDetail;
+    if (!chat.inputText.trim() && chat.inputImages.length === 0) return '请输入内容或附带图片';
+    return null;
+  }, [chat.streaming, connectivityState, availabilityHint, chat.inputText, chat.inputImages.length]);
+
+  const inputPlaceholder = useMemo(() => {
+    if (connectivityState === 'checking') {
+      return '正在检测后端与 LLM 配置…';
+    }
+    if (availabilityHint?.kind === 'server-offline') {
+      return '后端未连接，请先启动服务后再发送…';
+    }
+    if (availabilityHint) {
+      return '请先在右上角“设置”中完成 LLM 配置…';
+    }
+    return '描述你想画的内容，或直接 Ctrl+V 粘贴参考图…';
+  }, [connectivityState, availabilityHint]);
+
+  const configLabel = connectivityState === 'server-offline'
+    ? '后端离线'
+    : (chat.configProfiles.length > 0 ? null : '未配置 API');
 
   // Auto-compress when remaining context is below threshold (only when contextWindow is known)
   useEffect(() => {
@@ -1500,6 +1687,22 @@ export default function ChatPanel() {
             )}
           </div>
           <div className="chat-input-wrapper">
+            {availabilityHint && (
+              <div className={`chat-status-banner ${availabilityHint.tone}`}>
+                <div className="chat-status-banner-text">
+                  <strong>{availabilityHint.title}</strong>
+                  <span>{availabilityHint.detail}</span>
+                </div>
+                <button
+                  className="chat-status-action-btn"
+                  onClick={() => { refreshAvailabilityState().catch(() => {}); }}
+                  disabled={refreshingAvailability}
+                  title={availabilityHint.actionLabel}
+                >
+                  {refreshingAvailability ? '检测中…' : availabilityHint.actionLabel}
+                </button>
+              </div>
+            )}
             <div className="chat-context-bar">
               {chat.contextWindow > 0 ? (
                 <div className="chat-context-progress-wrapper">
@@ -1521,8 +1724,8 @@ export default function ChatPanel() {
               <button
                 className="chat-compress-btn"
                 onClick={handleCompress}
-                disabled={chat.compressing || chat.streaming}
-                title="压缩历史对话"
+                disabled={chat.compressing || chat.streaming || connectivityState === 'checking' || !!availabilityHint}
+                title={availabilityHint?.compactDetail || (connectivityState === 'checking' ? '正在检测服务状态' : '压缩历史对话')}
               >
                 {chat.compressing ? '压缩中…' : '压缩'}
               </button>
@@ -1543,7 +1746,7 @@ export default function ChatPanel() {
                   ))}
                 </select>
               ) : (
-                <span className="chat-model-label">未配置 API</span>
+                <span className="chat-model-label">{configLabel}</span>
               )}
 
               {chat.models.length > 0 ? (
@@ -1591,7 +1794,7 @@ export default function ChatPanel() {
               <textarea
                 ref={textareaRef}
                 className="chat-input"
-                placeholder="描述你想画的内容，或直接 Ctrl+V 粘贴参考图…"
+                placeholder={inputPlaceholder}
                 value={chat.inputText}
                 onChange={(e) => chatDispatch({ type: 'SET_INPUT', text: e.target.value })}
                 onPaste={handlePaste}
@@ -1602,7 +1805,8 @@ export default function ChatPanel() {
               <button
                 className="chat-send-btn"
                 onClick={handleSend}
-                disabled={chat.streaming || (!chat.inputText.trim() && chat.inputImages.length === 0)}
+                disabled={!!sendDisabledReason}
+                title={sendDisabledReason ?? '发送消息'}
               >
                 {chat.streaming ? '等待中…' : '发送'}
               </button>

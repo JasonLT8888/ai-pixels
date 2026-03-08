@@ -121,6 +121,7 @@
 - 作用：根据某个配置或临时输入的 API 地址拉取模型列表
 - 输入：`config_id` 或 `api_url + api_token`
 - 返回：`models: [{ id, context_window? }]`
+- 错误：配置不完整时返回 `code: "LLM_CONFIG_INCOMPLETE"`
 
 ## 4. LLM 聊天接口
 
@@ -151,6 +152,7 @@
 - 服务端会自动拼接默认系统提示词与用户追加提示词
 - 若 chat 存在压缩摘要，服务端只注入摘要和压缩点之后的消息
 - `retry_last_user` 可避免 SSE 中断后重复插入用户消息
+- 配置缺失时会返回结构化错误码：`LLM_CONFIG_MISSING` 或 `LLM_CONFIG_INCOMPLETE`
 
 ## 5. 兼容性遗留接口
 

@@ -90,7 +90,7 @@ router.post('/models', async (req, res) => {
   const token = req.body?.api_token || resolved?.api_token || '';
 
   if (!apiUrl) {
-    return res.status(400).json({ error: 'api_url is required' });
+    return res.status(400).json({ code: 'LLM_CONFIG_INCOMPLETE', error: '当前配置缺少 API 地址' });
   }
 
   try {

@@ -996,12 +996,83 @@ body {
   color: #ffd2d2;
 }
 
+.chat-status-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.chat-status-banner.warning {
+  background: rgba(255, 191, 71, 0.1);
+  border-color: rgba(255, 191, 71, 0.34);
+}
+
+.chat-status-banner.danger {
+  background: rgba(255, 94, 94, 0.1);
+  border-color: rgba(255, 94, 94, 0.36);
+}
+
+.chat-status-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-status-banner-text strong {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.chat-status-banner-text span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.chat-status-action-btn {
+  flex-shrink: 0;
+  background: rgba(124, 111, 247, 0.12);
+  border: 1px solid rgba(124, 111, 247, 0.32);
+  color: var(--text);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-status-action-btn:hover:not(:disabled) {
+  background: rgba(124, 111, 247, 0.2);
+}
+
+.chat-status-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .chat-input-area {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .chat-status-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chat-status-action-btn {
+    align-self: flex-start;
+  }
 }
 
 .chat-input {

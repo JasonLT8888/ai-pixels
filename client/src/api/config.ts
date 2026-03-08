@@ -2,9 +2,20 @@ import type { LLMConfigCollection, LLMConfigProfile } from 'shared/src/types';
 
 const API = '/api/config';
 
+async function readJsonOrThrow<T>(res: Response, fallbackMessage: string): Promise<T> {
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+      ? data.error
+      : fallbackMessage;
+    throw new Error(message);
+  }
+  return (data ?? {}) as T;
+}
+
 export async function fetchLLMConfig(): Promise<LLMConfigCollection> {
   const res = await fetch(`${API}/llm`);
-  return res.json();
+  return readJsonOrThrow<LLMConfigCollection>(res, '获取 LLM 配置失败');
 }
 
 export async function createLLMConfig(data: {
@@ -58,7 +69,7 @@ export async function setActiveLLMConfig(configId: number | null): Promise<LLMCo
 
 export async function fetchSystemPrompt() {
   const res = await fetch(`${API}/prompt`);
-  return res.json();
+  return readJsonOrThrow<{ content?: string }>(res, '获取系统提示词失败');
 }
 
 export async function updateSystemPrompt(content: string) {
