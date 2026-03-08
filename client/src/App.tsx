@@ -200,29 +200,32 @@ export default function App() {
             <div className="canvas-overlay-comment">{state.lastComment}</div>
           )}
 
-          {/* 左下角：palette（仅存在 palette 指令时显示） */}
-          {state.palette.length > 0 && (
-            <div className="canvas-overlay-palette">
-              {state.palette.map((hex, i) => (
-                <span
-                  key={i}
-                  className={'palette-swatch' + (state.currentColorIndex === i ? ' active' : '')}
-                  style={{ backgroundColor: hex }}
-                  title={`${i}: ${hex}`}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* 底部居中：当前画笔颜色 */}
-          <div className="canvas-overlay-color">
-            <span className="color-label">当前颜色:</span>
-            {state.currentColorIndex !== null && (
-              <span className="color-index">{state.currentColorIndex}</span>
+          {/* 左下角：调色板 + 当前颜色 */}
+          <div className="canvas-overlay-color-panel">
+            {state.palette.length > 0 && (
+              <div className="canvas-overlay-palette">
+                {state.palette.map((hex, i) => (
+                  <span
+                    key={i}
+                    className={'palette-item' + (state.currentColorIndex === i ? ' active' : '')}
+                    title={`${i}: ${hex}`}
+                  >
+                    <span className="palette-index">{i}</span>
+                    <span className="palette-swatch" style={{ backgroundColor: hex }} />
+                  </span>
+                ))}
+              </div>
             )}
-            {state.currentColorIndex !== null && <span className="color-sep">|</span>}
-            <span className="color-swatch" style={{ backgroundColor: state.currentColorHex }} />
-            <span>{state.currentColorHex}</span>
+
+            <div className="canvas-overlay-color">
+              <span className="color-label">当前颜色:</span>
+              {state.currentColorIndex !== null && (
+                <span className="color-index">{state.currentColorIndex}</span>
+              )}
+              {state.currentColorIndex !== null && <span className="color-sep">|</span>}
+              <span className="color-swatch" style={{ backgroundColor: state.currentColorHex }} />
+              <span>{state.currentColorHex}</span>
+            </div>
           </div>
         </section>
 
